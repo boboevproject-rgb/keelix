@@ -38,3 +38,19 @@ def parse_time(raw) -> datetime | None:
     except ValueError:
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+#: Russian month abbreviations, independent of the system locale.
+RU_MONTHS = ("янв", "фев", "мар", "апр", "мая", "июн",
+             "июл", "авг", "сен", "окт", "ноя", "дек")
+#: Nominative forms for axis ticks (a month on its own, not "5 мая").
+RU_MONTHS_NOM = ("янв", "фев", "мар", "апр", "май", "июн",
+                 "июл", "авг", "сен", "окт", "ноя", "дек")
+
+
+def ru_date(dt: datetime, fmt: str = "%d %b %Y") -> str:
+    """``strftime`` with ``%b`` replaced by a Russian month abbreviation.
+
+    Never relies on the system locale, so it reads the same everywhere.
+    """
+    return dt.strftime(fmt.replace("%b", RU_MONTHS[dt.month - 1]))

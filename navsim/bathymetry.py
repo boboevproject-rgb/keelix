@@ -125,23 +125,23 @@ class Bathymetry:
     def report(self) -> str:
         d = self.depth_m[np.isfinite(self.depth_m)]
         lines = [
-            f"Bathymetry source   {self.source}",
-            f"Grid                {self.shape[0]} x {self.shape[1]}",
-            f"Resolution          {self.resolution_m:,.0f} m"
-            if np.isfinite(self.resolution_m) else "Resolution          unknown",
+            f"Источник глубин     {self.source}",
+            f"Сетка               {self.shape[0]} x {self.shape[1]}",
+            f"Разрешение          {self.resolution_m:,.0f} м"
+            if np.isfinite(self.resolution_m) else "Разрешение          неизвестно",
         ]
         if d.size:
-            lines.append(f"Depth range         {np.nanmin(d):,.0f} to "
-                         f"{np.nanmax(d):,.0f} m")
+            lines.append(f"Диапазон глубин     от {np.nanmin(d):,.0f} до "
+                         f"{np.nanmax(d):,.0f} м")
             for draft in (4.0, 9.4, 12.0, 15.0):
                 frac = self.navigable(draft).mean()
-                lines.append(f"  navigable at {draft:5.1f} m draft   "
-                             f"{frac * 100:5.1f}% of the box")
+                lines.append(f"  судоходно при осадке {draft:5.1f} м   "
+                             f"{frac * 100:5.1f}% области")
             fill = self.suspect_fill()
             if fill.any():
-                lines.append(f"  suspect interpolated fill     "
-                             f"{fill.mean() * 100:5.1f}% of the box -- depths "
-                             f"there are guesses, not survey")
+                lines.append(f"  подозрение на интерполяцию    "
+                             f"{fill.mean() * 100:5.1f}% области -- глубины "
+                             f"там угаданы, а не измерены")
         if self.note:
             lines += ["", self.note]
         return "\n".join(lines)
@@ -159,7 +159,7 @@ def load_local(path: str | Path,
         import rasterio
         from rasterio.windows import from_bounds
     except ImportError as exc:
-        raise ImportError("reading a bathymetry grid requires rasterio") from exc
+        raise ImportError("для чтения сетки глубин нужен rasterio") from exc
 
     with rasterio.open(str(path)) as src:
         if bbox is not None:
@@ -176,7 +176,7 @@ def load_local(path: str | Path,
     depth = -arr                            # elevation up -> depth down
     mid_lat = 0.5 * (bounds[1] + bounds[3])
     res_m = res_deg * 111_320.0 * max(math.cos(math.radians(mid_lat)), 0.1)
-    return Bathymetry(depth, tuple(bounds), f"local file {Path(path).name}",
+    return Bathymetry(depth, tuple(bounds), f"локальный файл {Path(path).name}",
                       res_m)
 
 
@@ -210,12 +210,12 @@ def fetch_noaa_dem(bbox: Sequence[float], target_px: int = 900,
     }
     r = requests.get(NOAA_DEM_URL, params=params, timeout=timeout)
     if not r.ok or len(r.content) < 1024:
-        raise RuntimeError(f"NOAA DEM request failed ({r.status_code}): "
+        raise RuntimeError(f"запрос NOAA DEM не удался ({r.status_code}): "
                            f"{r.text[:200]}")
     try:
         import rasterio
     except ImportError as exc:
-        raise ImportError("reading the DEM requires rasterio") from exc
+        raise ImportError("для чтения DEM нужен rasterio") from exc
     with rasterio.open(io.BytesIO(r.content)) as src:
         elev = src.read(1).astype(float)
     elev[~np.isfinite(elev)] = np.nan
@@ -225,10 +225,10 @@ def fetch_noaa_dem(bbox: Sequence[float], target_px: int = 900,
         abs(n - s) / max(height - 1, 1) * 110_540.0,
     ]))
     return Bathymetry(
-        -elev, (w, s, e, n), "NOAA global DEM mosaic (keyless)", res_m,
-        note=("Resampled from a global blend: the grid is as fine as you "
-              "asked, the underlying data is not. Supply a GEBCO or EMODnet "
-              "grid when a specific channel matters."))
+        -elev, (w, s, e, n), "глобальная мозаика NOAA DEM (без ключа)", res_m,
+        note=("Пересчитано из глобальной смеси: сетка настолько подробна, "
+              "насколько вы просили, исходные данные -- нет. Если важен "
+              "конкретный фарватер, загрузите сетку GEBCO или EMODnet."))
 
 
 def fetch_erddap(bbox: Sequence[float], timeout: float = 120.0) -> Bathymetry:
@@ -240,11 +240,12 @@ def from_water_mask(water: np.ndarray, bbox: Sequence[float],
                     assumed_depth_m: float = 1000.0) -> Bathymetry:
     """Degraded fallback: everything wet is deep, everything dry is land."""
     depth = np.where(np.asarray(water, bool), assumed_depth_m, -10.0)
-    return Bathymetry(depth.astype(float), tuple(bbox), "coastline only",
+    return Bathymetry(depth.astype(float), tuple(bbox), "только береговая линия",
                       float("nan"),
-                      note=("NO DEPTH DATA. Every water pixel is treated as "
-                            "navigable, so shoals and reefs do not constrain "
-                            "anything and the corridor will be too wide."))
+                      note=("НЕТ ДАННЫХ О ГЛУБИНАХ. Каждый пиксель воды "
+                            "считается судоходным, поэтому мели и рифы ничего "
+                            "не ограничивают и коридор получится слишком "
+                            "широким."))
 
 
 def load_bathymetry(bbox: Sequence[float], local_path: str | Path | None = None,
@@ -263,9 +264,9 @@ def load_bathymetry(bbox: Sequence[float], local_path: str | Path | None = None,
     if water_mask is not None:
         return from_water_mask(water_mask, bbox)
     raise RuntimeError(
-        "no bathymetry available. Supply a GEBCO or EMODnet grid, or allow "
-        "network access for the free NOAA DEM fallback. Tried: "
-        + "; ".join(errors))
+        "нет данных о глубинах. Загрузите сетку GEBCO или EMODnet или "
+        "разрешите доступ к сети для бесплатного запасного NOAA DEM. "
+        "Пробовали: " + "; ".join(errors))
 
 
 # --------------------------------------------------------------------------
@@ -365,8 +366,8 @@ class NavGraph:
         rr, cc = np.nonzero(candidate)
         if rr.size == 0:
             raise ValueError(
-                "no navigable water in this box at this draft -- the whole "
-                "area is shallower than the hull needs")
+                "в этой области нет судоходной воды при такой осадке -- "
+                "вся акватория мельче, чем нужно корпусу")
         k = int(np.argmin((rr - r) ** 2 + (cc - c) ** 2))
         return int(self._index[rr[k], cc[k]])
 
@@ -550,13 +551,14 @@ def route_bottleneck(bathy: Bathymetry, start: tuple[float, float],
         "pinch_lonlat": where,
         "pinch_in_suspect_fill": in_fill,
         "verdict": (
-            f"deepest continuous route bottoms out at {lo:.1f} m, so hulls "
-            f"up to about {lo / 1.10:.1f} m draft can make it"
-            + (". The pinch point lies in SUSPECT INTERPOLATED FILL: this is "
-               "probably a data gap, not real shallow water -- load a survey "
-               "grid (NOAA BAG/ENC, GEBCO) to confirm." if in_fill else
-               ". No obvious fill at the pinch, but free elevation mosaics "
-               "routinely miss dredged channels and berth basins, so treat a "
-               "shallow pinch near a port as unconfirmed until checked "
-               "against a nautical chart.")),
+            f"самый глубокий непрерывный маршрут мелеет до {lo:.1f} м, "
+            f"так что пройдут корпуса с осадкой примерно до {lo / 1.10:.1f} м"
+            + (". Узкое место попадает в ПОДОЗРИТЕЛЬНУЮ ИНТЕРПОЛЯЦИЮ: скорее "
+               "всего, это пробел в данных, а не настоящее мелководье -- "
+               "загрузите съёмочную сетку (NOAA BAG/ENC, GEBCO) для "
+               "проверки." if in_fill else
+               ". Явной интерполяции в узком месте нет, но бесплатные мозаики "
+               "высот часто не видят углублённых фарватеров и ковшей у "
+               "причалов, поэтому мелкое узкое место у порта считайте "
+               "неподтверждённым, пока не сверите с морской картой.")),
     }

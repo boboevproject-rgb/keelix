@@ -110,7 +110,7 @@ def test_events_match_truth(report):
     # A left between pass 9 and 10; C between 11 and 12
     assert any(e.t0 == P[9].when and e.t1 == P[10].when for e in left)
     assert any(e.t0 == P[11].when and e.t1 == P[12].when and e.severity == 3
-               and "carrier" in e.text for e in left)
+               and "авианос" in e.text for e in left)
     # B arrived between pass 4 and 5
     assert any(e.t0 == P[4].when and e.t1 == P[5].when for e in arrived)
     # no event at A's missed pass
@@ -185,8 +185,8 @@ def test_size_class_probabilities():
         probs = size_class(L)
         assert abs(sum(p for _n, p in probs) - 1.0) < 1e-9
         assert probs == sorted(probs, key=lambda t: -t[1])
-    assert size_class(330)[0][0] == "aircraft carrier"
-    assert size_class(330, exclude_carrier=True)[0][0] != "aircraft carrier"
+    assert size_class(330)[0][0] == "авианосец"
+    assert size_class(330, exclude_carrier=True)[0][0] != "авианосец"
 
 
 # ------------------------------------------------------------------- compare
@@ -264,7 +264,7 @@ def test_cli_parses():
 def test_report_text(report):
     from navsim.app import report_text
     txt = report_text(report)
-    assert "Test Base" in txt and "carrier" in txt
+    assert "Test Base" in txt and "авианос" in txt
 
 
 def test_app_opens_and_draws(report):
@@ -422,9 +422,9 @@ def test_pursuit_chain_rejects_impossible_speed():
     P.fixes = [pu.Fix(near, True, 320, 80, [], ), pu.Fix(far, True, 320, 80, [])]
     pu._chain(P)
     assert P.fixes[0].link_from == "base" and P.fixes[0].heading_deg is not None
-    assert P.fixes[1].link_from == "" and "timing/speed assumptions" in P.fixes[1].why
+    assert P.fixes[1].link_from == "" and "допущения о времени/скорости" in P.fixes[1].why
     txt = P.summary()
-    assert "size candidate" in txt and "not linked under the timing assumptions" in txt
+    assert "кандидат по размеру" in txt and "не связанных при допущениях о времени" in txt
 
 
 def test_carrier_departures_filter(report):
@@ -529,8 +529,8 @@ def test_report_is_written_as_utf8_whatever_the_locale(report, tmp_path,
     report = copy.copy(report)
     t = report.passes[3].when
     report.events = list(report.events) + [Event(
-        "shift-down", t, t, "Level fell: 24 → 15 ships",
-        "A level shift, as real reports contain.", 3)]
+        "shift-down", t, t, "Уровень упал: 24 → 15 кораблей",
+        "Смена уровня, как в настоящих отчётах.", 3)]
     monkeypatch.setattr(builtins, "open", windows_open)
     text = appmod.report_text(report)
     assert "→" in text, "fixture must exercise a character cp1252 lacks"

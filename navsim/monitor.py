@@ -101,23 +101,75 @@ class MonitorConfig:
 # ==========================================================================
 #: (name, shortest, longest, typical draft m, plain-language note).  Lengths
 #: are of real warship classes worldwide; the ranges overlap on purpose.
+#: Names and notes are display text (Russian); logic refers to the carrier
+#: class through :data:`CARRIER_CLASS`, never by its wording.
 SIZE_CLASSES: tuple[tuple[str, float, float, float, str], ...] = (
-    ("aircraft carrier", 285, 345, 11.5,
-     "only aircraft carriers are this long among warships"),
-    ("big-deck amphibious ship or mid-size carrier", 230, 290, 8.5,
-     "e.g. amphibious assault ships (~250 m) or carriers like Charles de "
-     "Gaulle (261 m)"),
-    ("amphibious transport dock or large supply ship", 180, 235, 7.5,
-     "e.g. amphibious transport docks (~208 m) and fleet replenishment ships"),
-    ("cruiser or large destroyer", 150, 185, 9.5,
-     "e.g. cruisers (~173 m) and the largest destroyers"),
-    ("destroyer, frigate or submarine", 110, 160, 8.0,
-     "e.g. destroyers (~155 m), frigates (~135 m), large submarines"),
-    ("frigate, corvette or submarine", 70, 120, 5.5,
-     "small surface combatants and attack submarines"),
-    ("patrol ship, minesweeper, tug or barge", 40, 75, 3.5,
-     "small craft"),
+    ("авианосец", 285, 345, 11.5,
+     "среди военных кораблей такую длину имеют только авианосцы"),
+    ("универсальный десантный корабль или средний авианосец", 230, 290, 8.5,
+     "напр., универсальные десантные корабли (~250 м) или авианосцы вроде "
+     "«Шарля де Голля» (261 м)"),
+    ("десантный транспорт-док или крупное судно снабжения", 180, 235, 7.5,
+     "напр., десантные транспорты-доки (~208 м) и суда комплексного "
+     "снабжения флота"),
+    ("крейсер или большой эсминец", 150, 185, 9.5,
+     "напр., крейсеры (~173 м) и крупнейшие эсминцы"),
+    ("эсминец, фрегат или подводная лодка", 110, 160, 8.0,
+     "напр., эсминцы (~155 м), фрегаты (~135 м), большие подводные лодки"),
+    ("фрегат, корвет или подводная лодка", 70, 120, 5.5,
+     "малые надводные боевые корабли и многоцелевые подводные лодки"),
+    ("патрульный корабль, тральщик, буксир или баржа", 40, 75, 3.5,
+     "малые суда"),
 )
+#: Name of the aircraft-carrier class in :data:`SIZE_CLASSES`.
+CARRIER_CLASS = SIZE_CLASSES[0][0]
+
+
+# ==========================================================================
+# Russian wording helpers
+# ==========================================================================
+_MONTHS_GEN = ("января", "февраля", "марта", "апреля", "мая", "июня",
+               "июля", "августа", "сентября", "октября", "ноября", "декабря")
+
+
+def plural(n: float, one: str, few: str, many: str) -> str:
+    """Russian noun form for a count: 1 пролёт, 2 пролёта, 5 пролётов."""
+    k = abs(int(round(float(n))))
+    if k % 10 == 1 and k % 100 != 11:
+        return one
+    if 2 <= k % 10 <= 4 and not 12 <= k % 100 <= 14:
+        return few
+    return many
+
+
+def count(n: float, one: str, few: str, many: str) -> str:
+    """``n`` (rounded) followed by the matching Russian noun form."""
+    return f"{int(round(float(n)))} {plural(n, one, few, many)}"
+
+
+#: Noun forms used with counts.
+PASSES = ("пролёт", "пролёта", "пролётов")
+PASSES_LOC = ("пролёте", "пролётах", "пролётах")     # "на N пролётах"
+SHIPS = ("корабль", "корабля", "кораблей")
+LARGE_SHIPS = ("крупный корабль", "крупных корабля", "крупных кораблей")
+LARGE_HULLS = ("крупный корпус", "крупных корпуса", "крупных корпусов")
+DAYS = ("день", "дня", "дней")
+
+
+def fmt_date(t: datetime, year: bool = False, time: bool = False) -> str:
+    """Russian date: «5 апреля», «5 апреля 2026», «5 апреля 14:30»."""
+    s = f"{t.day} {_MONTHS_GEN[t.month - 1]}"
+    if year:
+        s += f" {t.year}"
+    if time:
+        s += f" {t:%H:%M}"
+    return s
+
+
+def fmt_lat_lon(lat: float, lon: float, digits: int = 4) -> str:
+    """Position as «36.9500 с.ш. 76.3300 з.д.»."""
+    return (f"{abs(lat):.{digits}f} {'с.ш.' if lat >= 0 else 'ю.ш.'} "
+            f"{abs(lon):.{digits}f} {'в.д.' if lon >= 0 else 'з.д.'}")
 
 
 #: What separates a carrier from ships moored end to end is width, not
@@ -153,7 +205,7 @@ def size_class(length_m: float, exclude_carrier: bool = False
     sd = length_sigma(L)
     probs = []
     for name, lo, hi, _d, _n in SIZE_CLASSES:
-        if exclude_carrier and name == "aircraft carrier":
+        if exclude_carrier and name == CARRIER_CLASS:
             continue
         probs.append((name, max(_phi((hi - L) / sd) - _phi((lo - L) / sd),
                                 0.0)))
@@ -161,13 +213,16 @@ def size_class(length_m: float, exclude_carrier: bool = False
     return sorted(((n, p / tot) for n, p in probs), key=lambda t: -t[1])
 
 
-def _class_text(length_m: float, exclude_carrier: bool = False) -> str:
+def _class_text(length_m: float, exclude_carrier: bool = False,
+                bare: bool = False) -> str:
+    """Most probable class in words.  ``bare`` drops «скорее всего» from a
+    confident reading, for use inside a longer sentence."""
     probs = size_class(length_m, exclude_carrier)
     (n1, p1), (n2, p2) = probs[0], probs[1]
     note1 = next(nt for n, *_r, nt in SIZE_CLASSES if n == n1)
     if p1 >= 0.6:
-        return f"most probably a {n1} ({note1})"
-    return f"probably a {n1} ({p1:.0%}), possibly a {n2} ({p2:.0%})"
+        return f"{n1} ({note1})" if bare else f"скорее всего, {n1} ({note1})"
+    return f"вероятно, {n1} ({p1:.0%}), возможно, {n2} ({p2:.0%})"
 
 
 def interpret(length_m: float, width_m: float) -> dict:
@@ -179,30 +234,30 @@ def interpret(length_m: float, width_m: float) -> dict:
     """
     L, Wd = float(length_m), float(width_m)
     if L >= CARRIER_MIN_LENGTH_M and Wd >= CARRIER_MIN_WIDTH_M:
-        txt = ("most probably an aircraft carrier: it is both long and wide "
-               f"({Wd:.0f} m on radar; a carrier's flight deck is ~75 m "
-               "across, while ships moored end to end are long but narrow)")
+        txt = ("скорее всего, авианосец: корпус и длинный, и широкий "
+               f"({Wd:.0f} м на радаре; полётная палуба авианосца шириной "
+               "~75 м, а корабли, стоящие друг за другом, длинные, но узкие)")
         if L > 360:
-            txt += ("; longer than any carrier, so something is probably "
-                    "moored at its bow or stern as well")
+            txt += ("; длиннее любого авианосца, так что у его носа или "
+                    "кормы, вероятно, стоит ещё что-то")
         return {"ships": 1, "kind": "carrier", "draft": 11.5, "text": txt}
     if Wd >= NESTED_MIN_WIDTH_M:
         n = max(1, round(L / ONE_SHIP_BERTH_M))
-        each = _class_text(L / n, True).replace("most probably ", "")
+        each = _class_text(L / n, True, bare=True)
         return {"ships": 2 * n, "kind": "side-by-side",
                 "draft": typical_draft(L / n),
-                "text": (f"{Wd:.0f} m wide, about twice a warship's beam: most "
-                         f"probably two ships moored side by side, each "
-                         f"{each}")}
+                "text": (f"ширина {Wd:.0f} м — примерно две ширины военного "
+                         f"корабля: скорее всего, два корабля стоят борт к "
+                         f"борту, каждый — {each}")}
     if L >= 250:
         n = max(2, round(L / ONE_SHIP_BERTH_M))
-        single = _class_text(L, True)
+        single = _class_text(L, True, bare=True)
         return {"ships": n, "kind": "end-to-end", "draft": 9.0,
-                "text": (f"{L:.0f} m of occupied pier but only {Wd:.0f} m wide, "
-                         f"too narrow for a carrier: most probably {n} "
-                         f"destroyer- or frigate-size ships moored bow to "
-                         f"stern; less likely a single large ship "
-                         f"({single.replace('most probably ', '')})")}
+                "text": (f"{L:.0f} м занятого пирса, но ширина лишь {Wd:.0f} м"
+                         f" — слишком узко для авианосца: скорее всего, "
+                         f"{count(n, *SHIPS)} размером с эсминец или фрегат "
+                         f"стоят друг за другом; менее вероятно — один "
+                         f"крупный корабль ({single})")}
     return {"ships": 1, "kind": "single", "draft": typical_draft(L),
             "text": _class_text(L, True)}
 
@@ -371,15 +426,16 @@ class BaseReport:
     @property
     def headline(self) -> str:
         if not self.passes:
-            return "no radar passes"
+            return "нет радарных пролётов"
         last = self.passes[-1]
         usual = self.usual_in_port
-        rel = (f"{last.in_port / usual:.0%} of usual" if usual > 0
-               else "no usual level yet")
-        car = (f", {last.carriers} carrier{'s' if last.carriers != 1 else ''}"
+        rel = (f"{last.in_port / usual:.0%} от обычного" if usual > 0
+               else "обычный уровень пока неизвестен")
+        car = (f", из них {count(last.carriers, 'авианосец', 'авианосца', 'авианосцев')}"
                if last.carriers else "")
-        return (f"about {last.in_port} large ships in port on "
-                f"{last.when:%d %b %Y}{car} ({rel}; usual {usual:.0f})")
+        return (f"{fmt_date(last.when, year=True)}: в порту примерно "
+                f"{count(last.in_port, *LARGE_SHIPS)}{car} ({rel}; обычно "
+                f"{usual:.0f})")
 
 
 # ==========================================================================
@@ -426,7 +482,7 @@ def contrast_stack(patches: Sequence[Patch], cfg: MonitorConfig
             med = np.nanmedian(dh, axis=0)
     finite = np.isfinite(med)
     if finite.sum() < 50:
-        raise ValueError("too few imaged pixels to analyse")
+        raise ValueError("слишком мало снятых пикселей для анализа")
     # Open water: the darkest tenth of the box in cross-pol.  Every base box
     # contains harbour water, and nothing else is that dark in VH.
     water = finite & (med <= np.nanpercentile(med[finite], 10))
@@ -571,9 +627,9 @@ def analyse(key: str, name: str, passes: Sequence[Pass],
     passes = [passes[i] for i in keep]
     patches = [patches[i] for i in keep]
     if len(patches) < 4:
-        raise ValueError(f"only {len(patches)} usable radar passes; at least "
-                         f"4 are needed to learn what an empty berth looks "
-                         f"like")
+        raise ValueError(
+            f"пригодных радарных пролётов: {len(patches)}; нужно не менее 4, "
+            f"чтобы узнать, как выглядит пустой причал")
     H, W = patches[0].shape
     transform, crs = patches[0].transform, patches[0].crs
     C, valid, water_vv, open_water = contrast_stack(patches, cfg)
@@ -1080,23 +1136,26 @@ def _regimes(rep: "BaseReport") -> list[dict]:
 # Events and the text that explains them
 # ==========================================================================
 def _fmt(t: datetime) -> str:
-    return f"{t:%d %b}"
+    return fmt_date(t)
 
 
 def _span(t0: datetime, t1: datetime) -> str:
-    return f"between {_fmt(t0)} and {_fmt(t1)}"
+    return f"между {_fmt(t0)} и {_fmt(t1)}"
 
 
 def _cap(s: str) -> str:
-    """Capitalise the first letter only (str.capitalize lowercases "Oct")."""
+    """Capitalise the first letter only (str.capitalize lowercases the rest)."""
     return s[:1].upper() + s[1:]
 
 
-def _where(rep: BaseReport, t: Track) -> str:
+def _where(rep: BaseReport, t: Track, case: str = "loc") -> str:
+    """Where a track is, as a phrase: ``loc`` = «у причала 3 (…)» (where it
+    stands), ``from`` = «от причала 3 (…)» (where it left from)."""
     b = t.berth
-    pos = f"{abs(t.lat):.4f}{'N' if t.lat >= 0 else 'S'} " \
-          f"{abs(t.lon):.4f}{'E' if t.lon >= 0 else 'W'}"
-    return f"berth {b} ({pos})" if b else f"open water at {pos}"
+    pos = fmt_lat_lon(t.lat, t.lon)
+    if case == "from":
+        return f"от причала {b} ({pos})" if b else f"из открытой воды ({pos})"
+    return f"у причала {b} ({pos})" if b else f"в открытой воде ({pos})"
 
 
 def _route_text(rep: BaseReport, length_m: float, width_m: float) -> str:
@@ -1105,20 +1164,21 @@ def _route_text(rep: BaseReport, length_m: float, width_m: float) -> str:
         return ""
     draft = interpret(length_m, width_m)["draft"]
     if not r.get("ok"):
-        return (" Depth check: the free depth map is too coarse here "
-                f"({r.get('cell_m', 0):.0f} m cells) to trace the exit route.")
+        return (" Проверка глубин: бесплатная карта глубин здесь слишком "
+                f"грубая (ячейки {r.get('cell_m', 0):.0f} м), чтобы "
+                f"проследить путь выхода.")
     need = draft * 1.1
     km = r["distance_km"]
     hours = km / (15 * 1.852)
-    txt = (f" Depth check: a ship this size draws about {draft:.0f} m. The "
-           f"deepest way out to open sea is {km:.0f} km long"
-           f" (about {hours:.1f} h at 15 knots)")
+    txt = (f" Проверка глубин: осадка корабля такого размера — около "
+           f"{draft:.0f} м. Самый глубокий путь в открытое море длиной "
+           f"{km:.0f} км (около {hours:.1f} ч на 15 узлах)")
     if r["bottleneck_m"] < need:
-        txt += (f", and the free depth map shows it only {r['bottleneck_m']:.0f}"
-                f" m deep at its shallowest - the real channel is dredged "
-                f"deeper than the map knows")
+        txt += (f", и бесплатная карта глубин показывает в самом мелком месте "
+                f"лишь {r['bottleneck_m']:.0f} м — реальный фарватер углублён "
+                f"сильнее, чем знает карта")
     else:
-        txt += f", at least {r['bottleneck_m']:.0f} m deep all the way"
+        txt += f", глубина не менее {r['bottleneck_m']:.0f} м на всём пути"
     return txt + "."
 
 
@@ -1155,69 +1215,80 @@ def _events(rep: BaseReport, valid: np.ndarray, cfg: MonitorConfig
         if L < cfg.large_length_m:
             sev = 0
         peak = float(np.median([h.peak_db for h in t.hulls]))
-        stay = f"{len(t.presences)} pass{'es' if len(t.presences) > 1 else ''}"
+        # "на 3 пролётах": the count in the prepositional case
+        stay = count(len(t.presences), *PASSES_LOC)
         j0 = covered_before(t, t.first)
         j1 = covered_after(t, t.last)
         arrived = j0 >= 0
         left = j1 >= 0 and t.closed
         maybe_left = j1 >= 0 and not t.closed
         where = _where(rep, t)
-        L_txt = f"about {L:.0f} m long (radar estimate, +/-{length_sigma(L):.0f} m)"
-        strength = ("strong" if peak >= 24 else "clear" if peak >= 20
-                    else "moderate")
+        spot_empty = "причал пуст" if t.berth else "место пусто"
+        spot_imaged = ("причал снят пустым" if t.berth else
+                       "место снято пустым")
+        L_txt = (f"длиной около {L:.0f} м (оценка по радару, "
+                 f"±{length_sigma(L):.0f} м)")
+        strength = ("сильным" if peak >= 24 else "чётким" if peak >= 20
+                    else "умеренным")
         if len(t.presences) == 1 and t.last < n - 1:
-            gone = (f" and was gone by {_fmt(P[j1].when)}" if j1 >= 0 else "")
+            gone = (f", а к {_fmt(P[j1].when)} его уже не было"
+                    if j1 >= 0 else "")
             ev.append(Event(
                 "visit", P[t.first].when, P[t.first].when,
-                f"{L:.0f} m hull seen once"
-                + (f" at berth {t.berth}" if t.berth else " in open water"),
-                f"A hull {L_txt} was seen at {where} on "
-                f"{_fmt(P[t.first].when)}{gone}. Seen on one pass only, so a "
-                f"ship passing through, a short stop, or a one-off radar "
-                f"artefact. By size it would be {size}.",
+                f"Корпус {L:.0f} м замечен один раз"
+                + (f" у причала {t.berth}" if t.berth else " в открытой воде"),
+                f"Корпус {L_txt} замечен {where} {_fmt(P[t.first].when)}"
+                f"{gone}. Он виден только на одном пролёте: это может быть "
+                f"проходящий корабль, короткая остановка или разовый "
+                f"артефакт радара. По размеру: {size}.",
                 min(sev, 1), L, Wd, t.lon, t.lat, t.berth, t.id, False,
                 j0 if j0 >= 0 else t.first, j1 if j1 >= 0 else t.first,
-                **_conf("low", "one sighting; nothing before or after it")))
+                **_conf("low", "одно наблюдение; ни до, ни после него "
+                        "корпус не виден")))
             continue
         if arrived:
             once = len(t.presences) == 1
             ev.append(Event(
                 "arrived", P[j0].when, P[t.first].when,
-                f"{L:.0f} m hull arrived at berth {t.berth}"
-                + (" (seen once so far)" if once else ""),
-                f"{_cap(_span(P[j0].when, P[t.first].when))} a hull "
-                f"{L_txt} arrived at {where}. It is {size}. "
-                + (f"Still there on the latest pass ({_fmt(P[t.last].when)})."
-                   if t.last == n - 1 else f"Seen on {stay}."),
+                (f"Корпус {L:.0f} м: приход к причалу {t.berth}"
+                 if t.berth else f"Корпус {L:.0f} м появился в открытой воде")
+                + (" (пока замечен один раз)" if once else ""),
+                f"{_cap(_span(P[j0].when, P[t.first].when))} корпус "
+                f"{L_txt} появился {where}. По размеру: {size}. "
+                + (f"На последнем пролёте ({_fmt(P[t.last].when)}) он всё "
+                   f"ещё на месте." if t.last == n - 1 else
+                   f"Виден на {stay}."),
                 min(sev, 1) if once else sev, L, Wd, t.lon, t.lat, t.berth,
                 t.id, not once, j0, t.first,
                 **_conf("medium" if once else "high",
-                        f"berth empty on {_fmt(P[j0].when)}, hull with a "
-                        f"{strength} echo ({peak:.0f} dB) on "
-                        f"{stay}" + ("; the next pass will confirm it"
+                        f"{_fmt(P[j0].when)} {spot_empty}, затем корпус с "
+                        f"{strength} отражением ({peak:.0f} дБ) на "
+                        f"{stay}" + ("; следующий пролёт это подтвердит"
                                      if once else ""))))
         if left or maybe_left:
-            since = (f"in port since at least {_fmt(P[t.first].when)}"
+            since = (f"в порту как минимум с {_fmt(P[t.first].when)}"
                      if not arrived else
-                     f"it had arrived {_span(P[j0].when, P[t.first].when)}")
+                     f"он пришёл {_span(P[j0].when, P[t.first].when)}")
             conf = ("" if left else
-                    " Not yet confirmed: only one pass has shown the berth "
-                    "empty; the next pass will confirm or undo this.")
+                    f" Пока не подтверждено: {spot_empty} только на одном "
+                    f"пролёте; следующий пролёт подтвердит или отменит это.")
             empties = sum(1 for j in range(t.last + 1, n)
                           if _covered(t.hulls[-1].pixels, valid[j]))
             ev.append(Event(
                 "left" if left else "left?", P[t.last].when, P[j1].when,
-                f"{L:.0f} m hull left berth {t.berth}"
-                + ("" if left else " (unconfirmed)"),
-                f"{_cap(_span(P[t.last].when, P[j1].when))} a hull "
-                f"{L_txt} left {where}; {since} ({stay}). It is {size}."
+                (f"Корпус {L:.0f} м: уход от причала {t.berth}"
+                 if t.berth else f"Корпус {L:.0f} м ушёл из открытой воды")
+                + ("" if left else " (не подтверждено)"),
+                f"{_cap(_span(P[t.last].when, P[j1].when))} корпус "
+                f"{L_txt} ушёл {_where(rep, t, 'from')}; {since} (виден "
+                f"на {stay}). По размеру: {size}."
                 + _route_text(rep, L, Wd) + conf,
                 sev, L, Wd, t.lon, t.lat, t.berth, t.id, left,
                 t.last, j1,
                 **_conf("high" if left and len(t.presences) >= 2 else
                         "medium" if left else "low",
-                        f"seen on {stay}, then the berth imaged empty on "
-                        f"{empties} pass{'es' if empties != 1 else ''}")))
+                        f"виден на {stay}, затем {spot_imaged} на "
+                        f"{count(empties, *PASSES_LOC)}")))
 
     # ------------------------------------------- partial changes in a stretch
     for t in rep.tracks:
@@ -1236,27 +1307,28 @@ def _events(rep: BaseReport, valid: np.ndarray, cfg: MonitorConfig
                 i0, i1 = sz[k - 1][0], sz[k][0]
                 diff = abs(before - after)
                 if na < nb:
-                    title = f"One ship of a group left berth {t.berth}"
-                    text = (f"{_cap(_span(P[i0].when, P[i1].when))} the "
-                            f"occupied stretch at {_where(rep, t)} shrank from "
-                            f"about {before:.0f} m to {after:.0f} m while the "
-                            f"rest stayed: a ship of roughly {diff:.0f} m "
-                            f"left ({_class_text(diff, True)}).")
+                    title = f"Один корабль из группы ушёл от причала {t.berth}"
+                    text = (f"{_cap(_span(P[i0].when, P[i1].when))} занятый "
+                            f"участок {_where(rep, t)} сократился примерно с "
+                            f"{before:.0f} до {after:.0f} м, а остальные "
+                            f"корабли остались: ушёл корабль длиной около "
+                            f"{diff:.0f} м ({_class_text(diff, True)}).")
                     kind = "part-left"
                 else:
-                    title = f"Another ship joined berth {t.berth}"
-                    text = (f"{_cap(_span(P[i0].when, P[i1].when))} the "
-                            f"occupied stretch at {_where(rep, t)} grew from "
-                            f"about {before:.0f} m to {after:.0f} m: a ship of "
-                            f"roughly {diff:.0f} m arrived alongside or "
-                            f"astern ({_class_text(diff, True)}).")
+                    title = f"К причалу {t.berth} подошёл ещё один корабль"
+                    text = (f"{_cap(_span(P[i0].when, P[i1].when))} занятый "
+                            f"участок {_where(rep, t)} вырос примерно с "
+                            f"{before:.0f} до {after:.0f} м: корабль длиной "
+                            f"около {diff:.0f} м встал борт к борту или за "
+                            f"кормой ({_class_text(diff, True)}).")
                     kind = "part-arrived"
                 ev.append(Event(kind, P[i0].when, P[i1].when, title, text,
                                 1 if diff < 180 else 2, diff, None, t.lon,
                                 t.lat, t.berth, t.id, True, i0, i1,
-                                **_conf("medium", "a change in the measured "
-                                        "length of one radar stretch, held "
-                                        "for two passes on each side")))
+                                **_conf("medium", "изменение измеренной "
+                                        "длины одного участка на радаре, "
+                                        "державшееся по два пролёта с каждой "
+                                        "стороны")))
                 k += 2
             else:
                 k += 1
@@ -1266,7 +1338,7 @@ def _events(rep: BaseReport, valid: np.ndarray, cfg: MonitorConfig
     # base normally sees.  The bar comes from the base's own churn: at a
     # base the size of Norfolk three berths changing in six days is routine.
     churn_note = ""
-    for kind, word in (("left", "left"), ("arrived", "arrived")):
+    for kind, word in (("left", "ушли"), ("arrived", "пришли")):
         by_gap: dict[tuple, list[Event]] = {}
         for e in ev:
             if e.kind == kind and (e.length_m or 0) >= cfg.large_length_m:
@@ -1281,9 +1353,9 @@ def _events(rep: BaseReport, valid: np.ndarray, cfg: MonitorConfig
         need = max(3, int(math.ceil(med + 3.0 * max(mad, 0.5))),
                    int(math.ceil(0.25 * rep.usual_in_port)))
         if kind == "left":
-            churn_note = (f"Between two passes this base usually sees about "
-                          f"{med:.0f} large hull{'s' if med != 1 else ''} "
-                          f"leave; {need} or more counts as a group.")
+            churn_note = (f"Между двумя пролётами с этой базы обычно уходит "
+                          f"примерно {count(med, *LARGE_HULLS)}; {need} и "
+                          f"более считаются групповым уходом.")
         for (t0, t1), es in by_gap.items():
             if (t1 - t0).total_seconds() < cfg.group_min_days * 86400:
                 continue
@@ -1294,49 +1366,61 @@ def _events(rep: BaseReport, valid: np.ndarray, cfg: MonitorConfig
                          for e in es)
             sizes = ", ".join(f"{e.length_m:.0f}" for e in
                               sorted(es, key=lambda e: -(e.length_m or 0)))
+            n_high = sum(e.confidence == "high" for e in es)
             if carriers and len(escorts) >= 2:
-                verb = "sailed" if kind == "left" else "returned"
+                verb = "вышла в море" if kind == "left" else "вернулась"
+                esc_n = count(len(escorts), "корабль сопровождения",
+                              "корабля сопровождения",
+                              "кораблей сопровождения")
                 ev.append(Event(
                     f"group-{kind}", t0, t1,
-                    f"Carrier group {verb}: carrier + {len(escorts)} escorts",
-                    f"{_cap(_span(t0, t1))} a carrier-sized hull "
-                    f"({carriers[0].length_m:.0f} m) and {len(escorts)} other "
-                    f"large hulls ({', '.join(f'{e.length_m:.0f}' for e in escorts)}"
-                    f" m) {kind} in the same interval. A carrier leaving with "
-                    f"escorts in the same few days is the signature of a "
-                    f"carrier group going to sea"
-                    + (" - a deployment, a large exercise or a storm sortie."
-                       if kind == "left" else " coming home."),
+                    f"Авианосная группа {verb}: авианосец + {esc_n}",
+                    f"{_cap(_span(t0, t1))} корпус размером с авианосец "
+                    f"({carriers[0].length_m:.0f} м) и ещё "
+                    f"{count(len(escorts), *LARGE_HULLS)} "
+                    f"({', '.join(f'{e.length_m:.0f}' for e in escorts)} м) "
+                    f"{word} за один и тот же интервал. "
+                    + ("Уход авианосца вместе с кораблями сопровождения за "
+                       "несколько дней — признак выхода авианосной группы в "
+                       "море: развёртывание, крупные учения или уход от "
+                       "шторма."
+                       if kind == "left" else
+                       "Приход авианосца вместе с кораблями сопровождения за "
+                       "несколько дней — признак возвращения авианосной "
+                       "группы домой."),
                     3, None, None, None, None, 0, -1, True,
                     es[0].before, es[0].after,
                     **_conf("high" if all(e.confidence == "high" for e in es)
                             else "medium",
-                            f"{len(es)} separate berth changes in one "
-                            f"interval, {sum(e.confidence == 'high' for e in es)}"
-                            f" of them confirmed by a second pass")))
+                            f"{count(len(es), 'отдельное изменение', 'отдельных изменения', 'отдельных изменений')}"
+                            f" у причалов за один интервал; подтверждено "
+                            f"вторым пролётом: {n_high}")))
                 continue
             if len(es) < need:
                 continue
             ev.append(Event(
                 f"group-{kind}", t0, t1,
-                f"About {nships} ships {word} together",
-                f"{_cap(_span(t0, t1))} {len(es)} occupied berths "
-                f"{'emptied' if kind == 'left' else 'filled'} at once (hull "
-                f"lengths {sizes} m), about {nships} ships. Between two "
-                f"passes this base usually sees about {med:.0f}. "
-                + ("Several ships sailing in the same few days usually means "
-                   "a group going to sea together: an exercise, a deployment, "
-                   "or ships leaving to avoid a storm."
+                f"Примерно {count(nships, *SHIPS)} {word} вместе",
+                f"{_cap(_span(t0, t1))} сразу "
+                f"{'опустели' if kind == 'left' else 'заполнились'} "
+                f"{count(len(es), 'причал', 'причала', 'причалов')} (длины "
+                f"корпусов {sizes} м) — это примерно "
+                f"{count(nships, *SHIPS)}. Между двумя пролётами здесь обычно "
+                f"меняется примерно {med:.0f}. "
+                + ("Если несколько кораблей уходят за несколько дней, обычно "
+                   "это группа, выходящая в море вместе: учения, "
+                   "развёртывание или уход от шторма."
                    if kind == "left" else
-                   "Several ships coming back in the same few days usually "
-                   "means a group returning from an exercise or deployment."),
+                   "Если несколько кораблей возвращаются за несколько дней, "
+                   "обычно это группа, вернувшаяся с учений или из "
+                   "развёртывания."),
                 3 if len(es) >= need + 2 else 2, None, None, None, None, 0,
                 -1, True, es[0].before, es[0].after,
-                **_conf("high" if sum(e.confidence == "high" for e in es)
-                        >= need else "medium",
-                        f"{len(es)} berth changes in one interval against a "
-                        f"usual {med:.0f}; {sum(e.confidence == 'high' for e in es)}"
-                        f" confirmed by a second pass")))
+                **_conf("high" if n_high >= need else "medium",
+                        f"{count(len(es), 'изменение', 'изменения', 'изменений')}"
+                        f" у причалов за один интервал при обычных "
+                        f"{med:.0f}; подтверждено вторым пролётом: "
+                        f"{n_high}")))
 
     # ------------------------------------------------- unusually long stays
     by_berth: dict[int, list[int]] = {}
@@ -1354,17 +1438,20 @@ def _events(rep: BaseReport, valid: np.ndarray, cfg: MonitorConfig
             days = (P[t.last].when - P[t.first].when).days
             ev.append(Event(
                 "long-stay", P[t.first].when, P[t.last].when,
-                f"{t.length_m:.0f} m hull at berth {t.berth} for {days} days",
-                f"A hull about {t.length_m:.0f} m long has been at "
-                f"{_where(rep, t)} since {_fmt(P[t.first].when)}: "
-                f"{len(t.presences)} passes, against a typical stay of "
-                f"{typical:.0f} passes for ships at this berth. Long stays "
-                f"usually mean maintenance or repair rather than readiness. "
-                f"It is {interpret(t.length_m, t.width_m)['text']}.",
+                f"Корпус {t.length_m:.0f} м у причала {t.berth} уже "
+                f"{count(days, *DAYS)}",
+                f"Корпус длиной около {t.length_m:.0f} м стоит "
+                f"{_where(rep, t)} с {_fmt(P[t.first].when)}: "
+                f"{count(len(t.presences), *PASSES)} при обычной стоянке в "
+                f"{count(typical, *PASSES)} для кораблей у этого причала. "
+                f"Долгая стоянка обычно означает обслуживание или ремонт, а "
+                f"не готовность к выходу. По размеру: "
+                f"{interpret(t.length_m, t.width_m)['text']}.",
                 1 if t.length_m < 180 else 2, t.length_m, t.width_m, t.lon,
                 t.lat, t.berth, t.id, True, t.first, t.last,
-                **_conf("medium", f"compared with {len(hist)} earlier stays "
-                        f"at the same berth")))
+                **_conf("medium", "сравнение с "
+                        f"{count(len(hist), 'прежней стоянкой', 'прежними стоянками', 'прежними стоянками')}"
+                        " у того же причала")))
 
     # ------------------------------------------------ level periods / shifts
     rep.regimes = _regimes(rep)
@@ -1388,50 +1475,54 @@ def _events(rep: BaseReport, valid: np.ndarray, cfg: MonitorConfig
             prev = R[k - 1]
             d = r["level"] - prev["level"]
             pct = d / max(prev["level"], 1.0)
-            direction = "fell" if d < 0 else "rose"
-            held = ("and has held since" if r["end"] == n - 1 else
-                    f"and held until {_fmt(b.when)}")
+            direction = "упал" if d < 0 else "вырос"
+            number = "снизилось" if d < 0 else "выросло"
+            held = ("и с тех пор держится" if r["end"] == n - 1 else
+                    f"и держалось до {_fmt(b.when)}")
             ev.append(Event(
                 "shift-down" if d < 0 else "shift-up",
                 P[prev["end"]].when, a.when,
-                f"Level {direction}: {prev['level']:.0f} → {r['level']:.0f} ships",
-                f"{_cap(_span(P[prev['end']].when, a.when))} the number of "
-                f"large ships in port {direction} from about "
-                f"{prev['level']:.0f} to {r['level']:.0f} ({pct:+.0%}) {held} "
-                f"({r['n']} passes). "
-                + ("A sustained drop means ships deployed, exercised or "
-                   "dispersed rather than a single sailing."
+                f"Уровень {direction}: {prev['level']:.0f} → "
+                f"{count(r['level'], *SHIPS)}",
+                f"{_cap(_span(P[prev['end']].when, a.when))} число крупных "
+                f"кораблей в порту {number} примерно с {prev['level']:.0f} "
+                f"до {r['level']:.0f} ({pct:+.0%}) {held} "
+                f"({count(r['n'], *PASSES)}). "
+                + ("Устойчивое снижение означает, что корабли ушли на "
+                   "развёртывание или учения либо рассредоточились, а не "
+                   "просто один корабль вышел в море."
                    if d < 0 else
-                   "A sustained rise means ships came home or gathered: the "
-                   "end of a deployment, a maintenance period, or a build-up "
-                   "before sailing together."),
+                   "Устойчивый рост означает, что корабли вернулись или "
+                   "собрались: конец развёртывания, период обслуживания или "
+                   "сбор перед совместным выходом."),
                 3 if abs(pct) >= 0.4 else 2, None, None, None, None, 0, -1,
                 True, prev["end"], r["start"],
                 **_conf("high" if r["n"] >= 4 else "medium",
-                        f"a change-point in the series held for {r['n']} "
-                        f"passes; medians {prev['level']:.0f} -> "
-                        f"{r['level']:.0f}")))
+                        f"точка смены уровня в ряду, державшаяся "
+                        f"{count(r['n'], *PASSES)}; медианы "
+                        f"{prev['level']:.0f} → {r['level']:.0f}")))
         if r["level"] <= lo or r["level"] >= hi:
             kind = "emptier" if r["level"] <= lo else "fuller"
-            span = (f"on {_fmt(a.when)}" if r["start"] == r["end"]
-                    else f"from {_fmt(a.when)} to {_fmt(b.when)}")
+            span = (f"{_fmt(a.when)}" if r["start"] == r["end"]
+                    else f"с {_fmt(a.when)} по {_fmt(b.when)}")
             ev.append(Event(
                 kind, a.when, b.when,
-                f"Unusually {'empty' if kind == 'emptier' else 'full'}: "
-                f"~{r['level']:.0f} ships (usual {usual:.0f})",
-                f"{_cap(span)} the base held about {r['level']:.0f} large "
-                f"ships against a usual {usual:.0f} (normal range "
-                f"{lo:.0f}-{hi:.0f}). "
-                + ("More ships than normal were away at the same time: a "
-                   "deployment, a large exercise, or a storm sortie."
+                f"Необычно {'мало' if kind == 'emptier' else 'много'} "
+                f"кораблей: ~{r['level']:.0f} (обычно {usual:.0f})",
+                f"{_cap(span)} на базе было примерно "
+                f"{count(r['level'], *LARGE_SHIPS)} при обычных "
+                f"{usual:.0f} (нормальный диапазон {lo:.0f}–{hi:.0f}). "
+                + ("Больше кораблей, чем обычно, одновременно отсутствовали: "
+                   "развёртывание, крупные учения или уход от шторма."
                    if kind == "emptier" else
-                   "More ships than normal were home at once: a maintenance "
-                   "period, a holiday stand-down, or ships gathering before "
-                   "sailing together."),
+                   "Больше кораблей, чем обычно, одновременно были дома: "
+                   "период обслуживания, праздничный перерыв или сбор перед "
+                   "совместным выходом."),
                 3 if r["n"] >= 4 else 2, None, None, None, None, 0, -1, True,
                 r["start"], r["end"],
                 **_conf("high" if r["n"] >= 4 else "medium",
-                        f"{r['n']} consecutive good passes at this level")))
+                        f"{count(r['n'], 'хороший пролёт', 'хороших пролёта', 'хороших пролётов')}"
+                        f" подряд на этом уровне")))
 
     rep.notes.append(churn_note) if churn_note else None
     ev.sort(key=lambda e: (e.t1, -e.severity))
@@ -1456,46 +1547,50 @@ def _notes(rep: BaseReport, geo: np.ndarray) -> list[str]:
     days = (P[-1].when - P[0].when).total_seconds() / 86400
     gaps = np.diff([p.when.timestamp() / 86400 for p in P]) if len(P) > 1 \
         else np.array([0.0])
-    notes.append(f"{len(P)} radar passes from {P[0].when:%d %b %Y} to "
-                 f"{P[-1].when:%d %b %Y}: one every {np.median(gaps):.0f} "
-                 f"days typically, longest gap {gaps.max():.0f} days.")
+    notes.append(f"{count(len(P), 'радарный пролёт', 'радарных пролёта', 'радарных пролётов')}"
+                 f" с {fmt_date(P[0].when, year=True)} по "
+                 f"{fmt_date(P[-1].when, year=True)}: обычно один раз в "
+                 f"{count(np.median(gaps), *DAYS)}, самый длинный перерыв — "
+                 f"{count(gaps.max(), *DAYS)}.")
     g = sorted(set(geo))
-    notes.append(f"Viewing angles: {len(g)} ({', '.join(g)}); each angle's "
-                 f"brightness offset is removed before comparison.")
+    notes.append(f"Углы съёмки: {len(g)} ({', '.join(g)}); перед сравнением "
+                 f"у каждого угла убирается его сдвиг яркости.")
     rough = sum(p.rough for p in P)
     poor = sum(p.poor for p in P)
     partial = sum(p.berth_coverage < 0.6 for p in P)
     if poor:
-        notes.append(f"{poor} pass(es) found far fewer hulls than their "
-                     f"neighbours and are treated as bad images, not empty "
-                     f"berths (drawn hollow; not used for events or the "
-                     f"usual level).")
+        notes.append(f"Пролётов, где найдено намного меньше корпусов, чем на "
+                     f"соседних: {poor}. Они считаются плохими снимками, а не "
+                     f"пустыми причалами (рисуются полыми; не используются "
+                     f"для событий и обычного уровня).")
     if rough:
-        notes.append(f"{rough} pass(es) had rough water; they are drawn hollow "
-                     f"and ignored for the 'usual' level.")
+        notes.append(f"Пролётов с бурным морем: {rough}. Они рисуются полыми "
+                     f"и не учитываются в «обычном» уровне.")
     if partial:
-        notes.append(f"{partial} pass(es) imaged only part of the berths; "
-                     f"drawn hollow too.")
-    notes.append(f"{len(rep.berths)} berths found (places next to a pier or "
-                 f"quay that are sometimes empty and sometimes hold a hull).")
+        notes.append(f"Пролётов, снявших только часть причалов: {partial}. "
+                     f"Они тоже рисуются полыми.")
+    notes.append(f"Найдено причалов: {len(rep.berths)} (места у пирса или "
+                 f"стенки, которые то пустуют, то заняты корпусом).")
     if rep.no_water_mask:
-        notes.append("No land-cover map was available, so stacked containers "
-                     "and other metal on a quay can be counted as ships. "
-                     "Counts outside a validated location should be treated "
-                     "as upper bounds.")
+        notes.append("Карта земного покрова недоступна, поэтому контейнеры в "
+                     "штабелях и другой металл на причале могут считаться "
+                     "кораблями. Вне проверенных мест числа стоит считать "
+                     "верхней оценкой.")
     if rep.static_hulls:
-        notes.append(f"{len(rep.static_hulls)} ship-shaped object(s) were "
-                     f"bright on every pass and are counted as present "
-                     f"throughout (most probably ships in long maintenance; "
-                     f"a crane or shed can look the same).")
+        notes.append(f"Объектов в форме корабля, ярких на каждом пролёте: "
+                     f"{len(rep.static_hulls)}. Они считаются "
+                     f"присутствовавшими всё время (скорее всего, это "
+                     f"корабли на долгом обслуживании; кран или ангар могут "
+                     f"выглядеть так же).")
     if days < 120:
-        notes.append("Under four months of history: the 'usual' level and "
-                     "the empty-berth reference are still settling.")
+        notes.append("История короче четырёх месяцев: «обычный» уровень и "
+                     "эталон пустого причала ещё уточняются.")
     if rep.usual_in_port < 1 or sum(t.length_m >= 100 for t in rep.tracks) < 2:
-        notes.append("Very little coming and going was seen. Either the "
-                     "berths were mostly empty, or ships stayed the whole "
-                     "period - a ship that never leaves looks like part of "
-                     "the pier to this method. A longer period can help.")
+        notes.append("Приходов и уходов почти не замечено. Либо причалы "
+                     "были в основном пусты, либо корабли простояли весь "
+                     "период — для этого метода корабль, который не уходит, "
+                     "выглядит частью пирса. Может помочь более длинный "
+                     "период.")
     return notes
 
 
@@ -1526,18 +1621,19 @@ def compare(reports: Sequence[BaseReport], window_days: float = 7.0
                 group.append(flagged[j])
                 used.add(j)
         if len(group) >= 2:
-            out.append(f"Week of {t:%d %b %Y}: " + "; ".join(
-                f"{g[1]} - {g[2]}" for g in group)
-                + ". Several bases losing ships in the same week points to a "
-                  "coordinated movement rather than routine sailings.")
+            out.append(f"Неделя с {fmt_date(t, year=True)}: " + "; ".join(
+                f"{g[1]} — {g[2]}" for g in group)
+                + ". Если несколько баз теряют корабли в одну неделю, это "
+                  "указывает на согласованное перемещение, а не на обычные "
+                  "выходы в море.")
     for r in reports:
         if r.passes:
             last = r.passes[-1]
             u = r.usual_in_port
             if u > 0:
-                out.append(f"{r.name}: latest ~{last.in_port} large ships "
-                           f"({last.in_port / u:.0%} of its usual {u:.0f}) "
-                           f"on {last.when:%d %b}.")
+                out.append(f"{r.name}: на {fmt_date(last.when)} примерно "
+                           f"{count(last.in_port, *LARGE_SHIPS)} "
+                           f"({last.in_port / u:.0%} от обычных {u:.0f}).")
     return out
 
 

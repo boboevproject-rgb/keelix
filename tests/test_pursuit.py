@@ -70,9 +70,9 @@ def test_failed_fine_measurement_does_not_promote_coarse_size(
     assert not fix.confirmed and not fix.is_carrier
     assert (fix.length_m, fix.width_m) == (0.0, 0.0)
     assert not fix.escorts and not result.chain
-    assert "failed" in fix.verification_note.lower()
-    assert "coarse candidates remain unverified" in result.summary()
-    assert "Land exclusion was unavailable" in result.summary()
+    assert "не удался" in fix.verification_note.lower()
+    assert "часть грубых кандидатов остаётся непроверенной" in result.summary()
+    assert "Исключение суши недоступно" in result.summary()
 
 
 @pytest.mark.parametrize("measurement", [
@@ -90,8 +90,8 @@ def test_unusable_fine_measurement_stays_unverified(
 
 
 @pytest.mark.parametrize("options,reason", [
-    ({"confirm": False}, "disabled"),
-    ({"max_confirm": 0}, "budget"),
+    ({"confirm": False}, "отключён"),
+    ({"max_confirm": 0}, "бюджет"),
 ])
 def test_skipped_measurement_is_explained(monkeypatch, search_fixture,
                                           options, reason):
@@ -101,7 +101,7 @@ def test_skipped_measurement_is_explained(monkeypatch, search_fixture,
     result = run(**options)
     assert not calls and not result.fixes[0].confirmed
     assert reason in result.fixes[0].verification_note.lower()
-    assert "no successful fine-grid measurement" in result.summary()
+    assert "без успешного замера на точной сетке" in result.summary()
 
 
 def test_unavailable_repeat_status_is_reported(monkeypatch, search_fixture):
@@ -110,8 +110,8 @@ def test_unavailable_repeat_status_is_reported(monkeypatch, search_fixture):
     result = run()
     fix, = result.fixes
     assert not fix.repeat_checked and not fix.fixed
-    assert "unavailable" in fix.verification_note.lower()
-    assert "lack a usable repeat-date check" in result.summary()
+    assert "недоступна" in fix.verification_note.lower()
+    assert "без пригодной проверки по другой дате" in result.summary()
 
 
 def test_repeat_exception_is_not_a_successful_negative(monkeypatch,
@@ -124,7 +124,7 @@ def test_repeat_exception_is_not_a_successful_negative(monkeypatch,
     monkeypatch.setattr(pu, "_seen_on_another_date", fail)
     fix, = run().fixes
     assert not fix.repeat_checked and not fix.fixed
-    assert "unavailable" in fix.verification_note.lower()
+    assert "недоступна" in fix.verification_note.lower()
 
 
 @pytest.mark.parametrize("coverage,has_target,expected", [
@@ -167,8 +167,8 @@ def test_nearby_targets_do_not_establish_identity(monkeypatch, search_fixture):
     fix, = result.fixes
     assert len(fix.escorts) == 2 and fix.confirmed
     assert fix.confidence == "unverified"
-    assert "Identity unverified" in result.summary()
-    assert "not confirmed escorts" in result.summary()
+    assert "Принадлежность не проверена" in result.summary()
+    assert "не подтверждены как сопровождение" in result.summary()
 
 
 def test_partial_swath_coverage_uses_valid_pixel_envelope():
@@ -196,7 +196,7 @@ def test_failed_tiles_are_not_reported_as_usable_coverage(
     searched, = result.searched
     assert searched.tiles == searched.blank == 1
     assert not searched.coverage_boxes and not result.candidates
-    assert "No usable radar coverage" in result.summary()
+    assert "Пригодного радарного покрытия для анализа нет" in result.summary()
 
 
 def test_tile_budget_counts_only_attempted_passes(monkeypatch, search_fixture):
@@ -209,7 +209,7 @@ def test_tile_budget_counts_only_attempted_passes(monkeypatch, search_fixture):
     assert len(result.searched) == 2
     assert [s.when for s in result.searched] == [p.when for p in products[:2]]
     assert all(s.coverage_boxes for s in result.searched)
-    assert "Some passes or parts of passes may be unsearched" in result.summary()
+    assert "Некоторые пролёты или их части могут остаться непросмотренными" in result.summary()
 
 
 def test_unlinked_size_candidates_are_not_reported_as_no_detection():
@@ -218,8 +218,8 @@ def test_unlinked_size_candidates_are_not_reported_as_no_detection():
     result.fixes = [pu.Fix(target, True, 330.0, 85.0, [])]
     pu._chain(result)
     assert not result.chain
-    assert "Size candidates were found" in result.summary()
-    assert "not linked under the timing assumptions" in result.summary()
+    assert "Кандидаты по размеру найдены" in result.summary()
+    assert "не связанных при допущениях о времени" in result.summary()
 
 
 def test_recomputing_links_clears_stale_confidence_and_motion():

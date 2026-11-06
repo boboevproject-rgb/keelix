@@ -116,7 +116,7 @@ def classes_on_grid(bbox: Sequence[float], shape: tuple[int, int],
         except Exception:
             continue
     if not got:
-        raise LandcoverError("could not read ESA WorldCover for this area")
+        raise LandcoverError("не удалось прочитать ESA WorldCover для этой области")
     return out
 
 

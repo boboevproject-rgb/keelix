@@ -35,8 +35,70 @@ from . import charts, credentials, pursuit, radar, store
 from .bases import BASES, BY_KEY, REGIONS
 from .monitor import BaseReport, Event, compare, interpret, normal_range
 
-PERIODS = {"6 months": 6, "9 months": 9, "12 months": 12, "18 months": 18,
-           "24 months": 24}
+# Display labels are the keys: the combobox shows them and looks them up here.
+PERIODS = {"6 месяцев": 6, "9 месяцев": 9, "12 месяцев": 12,
+           "18 месяцев": 18, "24 месяца": 24}
+DEFAULT_PERIOD = "12 месяцев"
+SEARCH_HINT = "Поиск баз"
+
+# Region keys stay English (bases.py, CLI and tests use them); only the
+# label shown in the sidebar is Russian.
+REGION_LABEL = {"North America": "Северная Америка", "Europe": "Европа",
+                "Russia": "Россия",
+                "Middle East & Africa": "Ближний Восток и Африка",
+                "Asia-Pacific": "Азиатско-Тихоокеанский регион"}
+
+COUNTRY_LABEL = {"USA": "США", "Russia (Crimea)": "Россия (Крым)",
+                 "Russia": "Россия", "China (Djibouti)": "Китай (Джибути)",
+                 "China": "Китай", "UK": "Великобритания",
+                 "France": "Франция", "Japan": "Япония",
+                 "Germany": "Германия", "Italy": "Италия",
+                 "Spain": "Испания", "Greece": "Греция", "Turkey": "Турция",
+                 "Canada": "Канада", "Australia": "Австралия",
+                 "India": "Индия", "Pakistan": "Пакистан",
+                 "South Korea": "Южная Корея", "Netherlands": "Нидерланды",
+                 "Syria": "Сирия", "Israel": "Израиль", "Bahrain": "Бахрейн",
+                 "Iran": "Иран"}
+
+# Event confidence codes come from monitor.py ("high"/"medium"/"low") and are
+# compared in logic; only the displayed word is translated.
+CONF_LABEL = {"high": "высокая", "medium": "средняя", "low": "низкая"}
+
+# Event-type filter: label shown -> group key used by _filtered().
+KIND_FILTERS = {"все": "all",
+                "приходы и уходы": "moves",
+                "группы и смены уровня": "groups",
+                "долгие стоянки": "long",
+                "единичные наблюдения": "single"}
+
+_MONTHS_SHORT = ("янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг",
+                 "сен", "окт", "ноя", "дек")
+_MONTHS_GEN = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля",
+               "августа", "сентября", "октября", "ноября", "декабря")
+
+
+def _d(dt, fmt: str = "%d %b %Y") -> str:
+    """strftime with Russian month names, independent of the OS locale."""
+    m = dt.month - 1
+    fmt = fmt.replace("%B", _MONTHS_GEN[m]).replace("%b", _MONTHS_SHORT[m])
+    return dt.strftime(fmt)
+
+
+def _conf(c: str) -> str:
+    return CONF_LABEL.get(c, c)
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+def _ships(n: int) -> str:
+    return f"{n} {_plural(n, 'корабль', 'корабля', 'кораблей')}"
 
 # ---------------------------------------------------------------- theme
 # Quiet and expensive-looking rather than loud: a slate sidebar, a warm
@@ -57,7 +119,7 @@ RED = "#b42318"
 GREEN = "#1a7f37"
 AMBER = "#9a6700"
 
-SEVERITY_LABEL = {3: "Headline", 2: "Notable", 1: "Routine", 0: "Minor"}
+SEVERITY_LABEL = {3: "Главное", 2: "Заметное", 1: "Обычное", 0: "Мелкое"}
 
 
 def _apply_theme(root: tk.Tk) -> dict:
@@ -291,8 +353,8 @@ class App(tk.Tk):
         self._build_nav()
         self._select_view(0)
 
-    VIEWS = ("Overview", "Berths", "Events", "Radar", "Compare",
-             "Sea search", "Method")
+    VIEWS = ("Обзор", "Причалы", "События", "Радар", "Сравнение",
+             "Поиск в море", "Метод")
 
     def _build_nav(self) -> None:
         self.nav_btns = []
@@ -316,7 +378,7 @@ class App(tk.Tk):
         bar = ttk.Frame(self, padding=(18, 16, 18, 10))
         bar.grid(row=0, column=1, sticky="ew")
         bar.columnconfigure(0, weight=1)
-        self.base_title = tk.StringVar(value="Select a base")
+        self.base_title = tk.StringVar(value="Выберите базу")
         self.base_sub = tk.StringVar(value="")
         ttk.Label(bar, textvariable=self.base_title, style="Title.TLabel"
                   ).grid(row=0, column=0, sticky="w")
@@ -328,18 +390,18 @@ class App(tk.Tk):
         _autowrap(sub, margin=12)
         right = ttk.Frame(bar)
         right.grid(row=0, column=1, rowspan=2, sticky="e")
-        ttk.Label(right, text="Period", style="Muted.TLabel").pack(
+        ttk.Label(right, text="Период", style="Muted.TLabel").pack(
             side="left", padx=(0, 6))
-        self.period = tk.StringVar(value="12 months")
+        self.period = tk.StringVar(value=DEFAULT_PERIOD)
         cb = ttk.Combobox(right, textvariable=self.period, values=list(PERIODS),
-                          state="readonly", width=10)
+                          state="readonly", width=12)
         cb.pack(side="left", padx=(0, 12))
         cb.bind("<<ComboboxSelected>>", lambda e: self._period_changed())
-        ttk.Button(right, text="Update base", style="Accent.TButton",
+        ttk.Button(right, text="Обновить базу", style="Accent.TButton",
                    command=self._update_current).pack(side="left")
-        ttk.Button(right, text="Update ticked",
+        ttk.Button(right, text="Обновить отмеченные",
                    command=self._update_checked).pack(side="left", padx=6)
-        ttk.Button(right, text="Settings", command=self._settings).pack(
+        ttk.Button(right, text="Настройки", command=self._settings).pack(
             side="left")
 
     def _build_sidebar(self) -> None:
@@ -348,7 +410,7 @@ class App(tk.Tk):
         side.rowconfigure(3, weight=1)
         ttk.Label(side, text=APP_NAME, style="Brand.TLabel").grid(
             row=0, column=0, sticky="w")
-        ttk.Label(side, text="naval base activity from radar",
+        ttk.Label(side, text="активность военно-морских баз по радару",
                   style="SideMuted.TLabel").grid(row=0, column=0, sticky="w",
                                                  pady=(26, 0))
         self.nav = ttk.Frame(side, style="Side.TFrame")
@@ -358,7 +420,7 @@ class App(tk.Tk):
         ent = ttk.Entry(side, textvariable=self.search, width=30,
                         style="Side.TEntry")
         ent.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        _placeholder(ent, self.search, "Search bases")
+        _placeholder(ent, self.search, SEARCH_HINT)
         lst = ttk.Frame(side, style="Side.TFrame")
         lst.grid(row=3, column=0, sticky="nsew")
         lst.rowconfigure(0, weight=1)
@@ -366,12 +428,12 @@ class App(tk.Tk):
         self.tree = ttk.Treeview(lst, columns=("tick", "state"),
                                  show="tree headings", selectmode="browse",
                                  style="Side.Treeview")
-        self.tree.heading("#0", text="BASE")
-        self.tree.heading("tick", text="CMP")
-        self.tree.heading("state", text="LATEST")
+        self.tree.heading("#0", text="БАЗА")
+        self.tree.heading("tick", text="СРАВН")
+        self.tree.heading("state", text="ПОСЛЕДНЕЕ")
         self.tree.column("#0", width=236, stretch=True)
-        self.tree.column("tick", width=44, anchor="center", stretch=False)
-        self.tree.column("state", width=112, stretch=False)
+        self.tree.column("tick", width=56, anchor="center", stretch=False)
+        self.tree.column("state", width=130, stretch=False)
         self.tree.grid(row=0, column=0, sticky="nsew")
         tsb = ttk.Scrollbar(lst, orient="vertical", command=self.tree.yview,
                             style="Side.Vertical.TScrollbar")
@@ -381,11 +443,11 @@ class App(tk.Tk):
         self.tree.bind("<Button-1>", self._on_click_tree, add=True)
         row = ttk.Frame(side, style="Side.TFrame")
         row.grid(row=4, column=0, sticky="ew", pady=(10, 0))
-        ttk.Button(row, text="Tick region", style="Nav.TButton",
+        ttk.Button(row, text="Отметить регион", style="Nav.TButton",
                    command=self._tick_region).pack(side="left")
-        ttk.Button(row, text="Clear", style="Nav.TButton",
+        ttk.Button(row, text="Сбросить", style="Nav.TButton",
                    command=self._clear_ticks).pack(side="left", padx=4)
-        ttk.Button(row, text="Tour", style="Nav.TButton",
+        ttk.Button(row, text="Тур", style="Nav.TButton",
                    command=lambda: Tour(self)).pack(side="right")
         self.key_status = tk.StringVar()
         ttk.Label(side, textvariable=self.key_status, style="SideMuted.TLabel"
@@ -406,7 +468,7 @@ class App(tk.Tk):
     # --------------------------------------------------------------- overview
     def _build_overview(self) -> None:
         f = ttk.Frame(self.nb, padding=(10, 10, 0, 0))
-        self.nb.add(f, text="Overview")
+        self.nb.add(f, text="Обзор")
         f.columnconfigure(0, weight=5)
         f.columnconfigure(1, weight=2)
         f.rowconfigure(1, weight=1)
@@ -414,9 +476,10 @@ class App(tk.Tk):
         kpis.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         self.kpi: dict[str, tuple[tk.StringVar, tk.StringVar]] = {}
         for k, (key, cap) in enumerate((
-                ("now", "SHIPS IN PORT"), ("usual", "USUAL LEVEL"),
-                ("delta", "SINCE LAST PASS"), ("carriers", "CARRIERS"),
-                ("metres", "HULL ALONGSIDE"), ("quality", "LATEST PASS"))):
+                ("now", "КОРАБЛЕЙ\nВ ПОРТУ"), ("usual", "ОБЫЧНЫЙ\nУРОВЕНЬ"),
+                ("delta", "С ПРОШЛОГО\nПРОЛЁТА"), ("carriers", "АВИА-\nНОСЦЫ"),
+                ("metres", "КОРПУСА\nУ ПРИЧАЛОВ"),
+                ("quality", "ПОСЛЕДНИЙ\nПРОЛЁТ"))):
             outer = tk.Frame(kpis, background=LINE)
             outer.grid(row=0, column=k, sticky="ew", padx=(0, 10))
             kpis.columnconfigure(k, weight=1)
@@ -437,12 +500,13 @@ class App(tk.Tk):
         chart = self._panel(f, row=1, column=0, sticky="nsew", padx=(0, 8))
         chart.rowconfigure(1, weight=1)
         chart.columnconfigure(0, weight=1)
-        ttk.Label(chart, text="ACTIVITY", style="Caps.TLabel").grid(
+        ttk.Label(chart, text="АКТИВНОСТЬ", style="Caps.TLabel").grid(
             row=0, column=0, sticky="w")
-        hint = ttk.Label(chart, text="Large ships in port on every radar "
-                                     "pass. Click a marker to read what "
-                                     "happened; down is a departure, up an "
-                                     "arrival, size follows the ship.",
+        hint = ttk.Label(chart, text="Крупные корабли в порту на каждом "
+                                     "пролёте радара. Нажмите на маркер, "
+                                     "чтобы узнать, что произошло: вниз — "
+                                     "уход, вверх — приход, размер маркера "
+                                     "соответствует кораблю.",
                          style="PanelMuted.TLabel", justify="left")
         hint.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         _autowrap(hint, margin=34)
@@ -453,7 +517,7 @@ class App(tk.Tk):
         recent = self._panel(f, row=1, column=1, sticky="nsew")
         recent.rowconfigure(1, weight=1)
         recent.columnconfigure(0, weight=1)
-        ttk.Label(recent, text="LATEST NOTABLE CHANGES", style="Caps.TLabel"
+        ttk.Label(recent, text="ПОСЛЕДНИЕ\nИЗМЕНЕНИЯ", style="Caps.TLabel"
                   ).grid(row=0, column=0, sticky="w", pady=(0, 8))
         self.recent = _scrolled_text(recent, self.fonts["body"], height=10,
                                      cursor="arrow", width=34)
@@ -473,15 +537,16 @@ class App(tk.Tk):
     # ----------------------------------------------------------------- berths
     def _build_berths(self) -> None:
         f = ttk.Frame(self.nb, padding=(10, 10, 0, 0))
-        self.nb.add(f, text="Berths")
+        self.nb.add(f, text="Причалы")
         f.rowconfigure(1, weight=1)
         f.columnconfigure(0, weight=1)
         head = ttk.Frame(f)
         head.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ttk.Label(head, text="Berth occupancy, pass by pass").pack(anchor="w")
+        ttk.Label(head, text="Занятость причалов по пролётам").pack(anchor="w")
         hl = ttk.Label(head, style="Muted.TLabel", text=(
-            "Each row is a berth (numbered north to south), each column a "
-            "radar pass. Click a cell to see that pass in the radar view."))
+            "Каждая строка — причальное место (нумерация с севера на юг), "
+            "каждый столбец — пролёт радара. Нажмите на ячейку, чтобы открыть "
+            "этот пролёт в виде «Радар»."))
         hl.pack(anchor="w", fill="x")
         _autowrap(hl)
         panel = self._panel(f, row=1, column=0, sticky="nsew")
@@ -499,33 +564,30 @@ class App(tk.Tk):
     # ----------------------------------------------------------------- events
     def _build_events(self) -> None:
         f = ttk.Frame(self.nb, padding=(10, 10, 0, 0))
-        self.nb.add(f, text="Events")
+        self.nb.add(f, text="События")
         f.rowconfigure(1, weight=1)
         f.columnconfigure(0, weight=3)
         f.columnconfigure(1, weight=2)
         flt = ttk.Frame(f)
         flt.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
-        ttk.Label(flt, text="Show", style="Muted.TLabel").pack(side="left")
+        ttk.Label(flt, text="Показать", style="Muted.TLabel").pack(side="left")
         self.sev_vars = {}
-        for sev, lab in ((3, "Headlines"), (2, "Notable"), (1, "Routine"),
-                         (0, "Minor")):
+        for sev, lab in ((3, "Главное"), (2, "Заметное"), (1, "Обычное"),
+                         (0, "Мелкое")):
             v = tk.BooleanVar(value=sev >= 1)
             self.sev_vars[sev] = v
             ttk.Checkbutton(flt, text=lab, variable=v,
                             command=self._fill_events).pack(side="left",
                                                             padx=(8, 0))
-        ttk.Label(flt, text="   Type", style="Muted.TLabel").pack(side="left")
-        self.kind_filter = tk.StringVar(value="all")
+        ttk.Label(flt, text="   Тип", style="Muted.TLabel").pack(side="left")
+        self.kind_filter = tk.StringVar(value=next(iter(KIND_FILTERS)))
         kcb = ttk.Combobox(flt, textvariable=self.kind_filter, state="readonly",
-                           width=26, values=(
-                               "all", "arrivals and departures",
-                               "groups and level changes",
-                               "long stays", "single sightings"))
+                           width=22, values=tuple(KIND_FILTERS))
         kcb.pack(side="left", padx=(6, 0))
         kcb.bind("<<ComboboxSelected>>", lambda e: self._fill_events())
-        ttk.Button(flt, text="Show in radar view",
+        ttk.Button(flt, text="Показать на радаре",
                    command=self._show_event_radar).pack(side="right")
-        ttk.Button(flt, text="Save report…",
+        ttk.Button(flt, text="Сохранить отчёт…",
                    command=self._save_report).pack(side="right", padx=6)
         left = self._panel(f, row=1, column=0, sticky="nsew", padx=(0, 8))
         left.rowconfigure(0, weight=1)
@@ -533,9 +595,9 @@ class App(tk.Tk):
         cols = ("when", "sev", "what", "conf")
         self.ev_tree = ttk.Treeview(left, columns=cols, show="headings",
                                     selectmode="browse")
-        for c, txt, wd in (("when", "When", 140), ("sev", "Level", 72),
-                           ("what", "What happened", 230),
-                           ("conf", "Confidence", 84)):
+        for c, txt, wd in (("when", "Когда", 150), ("sev", "Уровень", 86),
+                           ("what", "Что произошло", 230),
+                           ("conf", "Уверенность", 104)):
             self.ev_tree.heading(c, text=txt)
             self.ev_tree.column(c, width=wd, anchor="w",
                                 stretch=(c == "what"))
@@ -564,14 +626,14 @@ class App(tk.Tk):
     # ------------------------------------------------------------------ radar
     def _build_radar(self) -> None:
         f = ttk.Frame(self.nb, padding=(10, 10, 0, 0))
-        self.nb.add(f, text="Radar")
+        self.nb.add(f, text="Радар")
         f.rowconfigure(1, weight=1)
         f.columnconfigure(0, weight=1)
         ctl = ttk.Frame(f)
         ctl.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ttk.Button(ctl, text="◀ Previous pass",
+        ttk.Button(ctl, text="◀ Предыдущий пролёт",
                    command=lambda: self._step_pass(-1)).pack(side="left")
-        ttk.Button(ctl, text="Next pass ▶",
+        ttk.Button(ctl, text="Следующий пролёт ▶",
                    command=lambda: self._step_pass(1)).pack(side="left",
                                                             padx=(4, 12))
         self.radar_title = tk.StringVar(value="")
@@ -582,10 +644,10 @@ class App(tk.Tk):
         self.opt_struct = tk.BooleanVar(value=False)
         self.opt_berths = tk.BooleanVar(value=True)
         self.opt_photo = tk.BooleanVar(value=False)
-        for txt, var in (("change vs empty state", self.opt_change),
-                         ("structure", self.opt_struct),
-                         ("berth numbers", self.opt_berths),
-                         ("satellite photo (reference, undated)",
+        for txt, var in (("изменение к пустому состоянию", self.opt_change),
+                         ("сооружения", self.opt_struct),
+                         ("номера причалов", self.opt_berths),
+                         ("спутниковый снимок (справочный, без даты)",
                           self.opt_photo)):
             ttk.Checkbutton(opts, text=txt, variable=var,
                             command=self._draw_radar).pack(side="left",
@@ -603,12 +665,13 @@ class App(tk.Tk):
         tb.configure(background=PANEL)
         tb.pack(side="left")
         rl = ttk.Label(f, style="Muted.TLabel", justify="left",
-                  text=("Bright = strong radar echo. Red outlines are hulls "
-                        "found on that pass; the green outline is the hull an "
-                        "event refers to; dashed orange are ships present on "
-                        "every pass of the record. 'Change vs empty state' "
-                        "shows each pixel against its own emptiest state, "
-                        "which is what the detector actually looks at.")
+                  text=("Светлое — сильное радарное эхо. Красные контуры — "
+                        "корпуса, найденные на этом пролёте; зелёный контур — "
+                        "корпус, к которому относится событие; оранжевый "
+                        "пунктир — корабли, присутствующие на всех пролётах "
+                        "записи. «Изменение к пустому состоянию» показывает "
+                        "каждый пиксель относительно его самого пустого "
+                        "состояния — именно на это смотрит детектор.")
                   )
         rl.grid(row=2, column=0, sticky="ew", pady=(8, 6))
         _autowrap(rl)
@@ -616,14 +679,15 @@ class App(tk.Tk):
     # ---------------------------------------------------------------- compare
     def _build_compare(self) -> None:
         f = ttk.Frame(self.nb, padding=(10, 10, 0, 0))
-        self.nb.add(f, text="Compare")
+        self.nb.add(f, text="Сравнение")
         f.rowconfigure(1, weight=3)
         f.rowconfigure(2, weight=1)
         f.columnconfigure(0, weight=1)
         head = ttk.Frame(f)
         head.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ttk.Label(head, text="Ticked bases on one time axis").pack(side="left")
-        ttk.Button(head, text="Refresh", command=self._compare).pack(
+        ttk.Label(head, text="Отмеченные базы на одной оси времени").pack(
+            side="left")
+        ttk.Button(head, text="Обновить", command=self._compare).pack(
             side="right")
         panel = self._panel(f, row=1, column=0, sticky="nsew")
         panel.rowconfigure(0, weight=1)
@@ -639,52 +703,52 @@ class App(tk.Tk):
     # --------------------------------------------------------------- carriers
     def _build_carriers(self) -> None:
         f = ttk.Frame(self.nb, padding=(10, 10, 0, 0))
-        self.nb.add(f, text="Sea search")
+        self.nb.add(f, text="Поиск в море")
         f.rowconfigure(1, weight=1)
         f.columnconfigure(0, weight=2)
         f.columnconfigure(1, weight=3)
         head = ttk.Frame(f)
         head.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
-        ttk.Label(head, text="Sea search · experimental size candidates").pack(
-            anchor="w")
+        ttk.Label(head, text="Поиск в море · экспериментальные кандидаты "
+                             "по размеру").pack(anchor="w")
         sl = ttk.Label(head, style="Muted.TLabel", text=(
-            "Pick a carrier-sized departure to inspect nearby radar strips "
-            "for large, wide targets. Size and compatible timing do not "
-            "establish vessel identity; nearby targets are not verified "
-            "escorts. Coverage and request limits leave gaps. A search "
-            "usually takes 10-40 minutes."))
+            "Выберите уход корабля размером с авианосец, чтобы проверить "
+            "ближайшие полосы радарной съёмки на крупные широкие цели. Размер "
+            "и подходящее время не устанавливают личность судна; цели рядом — "
+            "не подтверждённое сопровождение. Покрытие и лимиты запросов "
+            "оставляют пробелы. Поиск обычно занимает 10–40 минут."))
         sl.pack(anchor="w", fill="x")
         _autowrap(sl)
         left = self._panel(f, row=1, column=0, sticky="nsew", padx=(0, 8))
         left.rowconfigure(1, weight=1)
         left.rowconfigure(3, weight=2)
         left.columnconfigure(0, weight=1)
-        ttk.Label(left, text="CARRIER-SIZED DEPARTURES AT THIS BASE",
+        ttk.Label(left, text="УХОДЫ КОРАБЛЕЙ РАЗМЕРОМ С АВИАНОСЕЦ",
                   style="Caps.TLabel").grid(row=0, column=0, sticky="w",
                                             pady=(0, 8))
         self.car_tree = ttk.Treeview(left, columns=("when", "size", "conf"),
                                      show="headings", selectmode="browse",
                                      height=6)
-        for c, txt, wd in (("when", "Left between", 170),
-                           ("size", "Hull on radar", 120),
-                           ("conf", "Confidence", 90)):
+        for c, txt, wd in (("when", "Ушёл между", 170),
+                           ("size", "Корпус на радаре", 140),
+                           ("conf", "Уверенность", 104)):
             self.car_tree.heading(c, text=txt)
             self.car_tree.column(c, width=wd)
         self.car_tree.grid(row=1, column=0, sticky="nsew")
         ctl = ttk.Frame(left, style="Panel.TFrame")
         ctl.grid(row=2, column=0, sticky="ew", pady=6)
-        ttk.Label(ctl, text="days after", style="PanelMuted.TLabel").pack(
+        ttk.Label(ctl, text="дней после", style="PanelMuted.TLabel").pack(
             side="left")
         self.car_days = tk.IntVar(value=10)
         ttk.Spinbox(ctl, from_=2, to=30, textvariable=self.car_days,
                     width=4).pack(side="left", padx=(4, 10))
-        ttk.Label(ctl, text="radius km", style="PanelMuted.TLabel").pack(
+        ttk.Label(ctl, text="радиус, км", style="PanelMuted.TLabel").pack(
             side="left")
         self.car_radius = tk.IntVar(value=700)
         ttk.Spinbox(ctl, from_=200, to=1500, increment=100,
                     textvariable=self.car_radius, width=5).pack(
             side="left", padx=(4, 10))
-        ttk.Button(ctl, text="Inspect radar candidates", style="Accent.TButton",
+        ttk.Button(ctl, text="Проверить кандидатов", style="Accent.TButton",
                    command=self._pursue).pack(side="left")
         self.car_text = _scrolled_text(left, self.fonts["body"], height=12)
         self.car_text.frame.grid(row=3, column=0, sticky="nsew")
@@ -693,8 +757,8 @@ class App(tk.Tk):
         right.columnconfigure(0, weight=1)
         self.pfig, self.pcanvas, w = _figure(right, (8, 6))
         w.grid(row=0, column=0, sticky="nsew")
-        charts.blank(self.pfig, "Select a carrier-sized departure and press "
-                                "'Inspect radar candidates'.")
+        charts.blank(self.pfig, "Выберите уход корабля размером с авианосец "
+                                "и нажмите «Проверить кандидатов».")
         self.pursuits: dict[str, pursuit.Pursuit] = {}
 
     def _fill_carriers(self, rep: BaseReport) -> None:
@@ -704,20 +768,23 @@ class App(tk.Tk):
                                      key=lambda e: e.t1, reverse=True)):
             iid = f"c{k}"
             self.car_tree.insert("", "end", iid=iid, values=(
-                f"{e.t0:%d %b} – {e.t1:%d %b %Y}",
-                f"{e.length_m:.0f} × {(e.width_m or 0):.0f} m", e.confidence))
+                f"{_d(e.t0, '%d %b')} – {_d(e.t1, '%d %b %Y')}",
+                f"{e.length_m:.0f} × {(e.width_m or 0):.0f} м",
+                _conf(e.confidence)))
             self._car_ids[iid] = e
         if not self._car_ids:
             self.car_text.delete("1.0", "end")
-            self.car_text.insert("1.0", "No carrier-sized departure in this "
-                                        "period at this base.")
+            self.car_text.insert("1.0", "За этот период на этой базе не было "
+                                        "уходов кораблей размером с "
+                                        "авианосец.")
 
     def _pursue(self) -> None:
         rep = self.reports.get(self.current or "")
         sel = self.car_tree.selection()
         if rep is None or not sel:
-            messagebox.showinfo("Pick a departure",
-                                "Select a carrier-sized departure first.")
+            messagebox.showinfo("Выберите уход",
+                                "Сначала выберите уход корабля размером с "
+                                "авианосец.")
             return
         if not radar.have_credentials():
             self._settings()
@@ -728,16 +795,17 @@ class App(tk.Tk):
         key = f"{rep.key}:{e.t1:%Y%m%d}"
         self._select_view(5)
         self.car_text.delete("1.0", "end")
-        self.car_text.insert("1.0", "Searching… each radar strip is fetched "
-                                    "at 50 m in 60 km tiles and scanned for a "
-                                    "hull at least 200 m long; the best "
-                                    "candidates are re-measured at 10 m "
-                                    "output spacing from the same acquisition. "
-                                    "This does not confirm vessel identity. "
-                                    "Copernicus throttles free accounts, so "
-                                    "this takes 10-40 minutes. You can cancel "
-                                    "and resume later: fetched tiles are "
-                                    "kept.")
+        self.car_text.insert("1.0", "Идёт поиск… каждая полоса радарной "
+                                    "съёмки загружается с шагом 50 м плитками "
+                                    "по 60 км и просматривается на корпус "
+                                    "длиной от 200 м; лучшие кандидаты "
+                                    "перемеряются с шагом 10 м по той же "
+                                    "съёмке. Это не подтверждает личность "
+                                    "судна. Copernicus ограничивает скорость "
+                                    "для бесплатных аккаунтов, поэтому поиск "
+                                    "занимает 10–40 минут. Его можно отменить "
+                                    "и продолжить позже: загруженные плитки "
+                                    "сохраняются.")
 
         def job():
             P = pursuit.search(rep.key, b.name, b.centre, e.t0, e.t1,
@@ -758,14 +826,16 @@ class App(tk.Tk):
             self.car_text.insert("1.0", P.summary())
             charts.draw_pursuit(self.pfig, P, bm)
             self.pcanvas.draw_idle()
-            self.status.set(f"Sea search done: {len(P.chain)} tentative "
-                            f"association(s), {len(P.searched)} passes attempted")
+            self.status.set(f"Поиск в море завершён: предварительных связей — "
+                            f"{len(P.chain)}, проверено пролётов — "
+                            f"{len(P.searched)}")
 
-        self._submit("Inspecting experimental sea-search candidates…", job, done)
+        self._submit("Проверка экспериментальных кандидатов поиска в море…",
+                     job, done)
 
     def _build_method(self) -> None:
         f = ttk.Frame(self.nb, padding=(10, 10, 0, 0))
-        self.nb.add(f, text="Method & limits")
+        self.nb.add(f, text="Метод и ограничения")
         f.rowconfigure(0, weight=1)
         f.columnconfigure(0, weight=1)
         panel = self._panel(f, row=0, column=0, sticky="nsew")
@@ -788,10 +858,10 @@ class App(tk.Tk):
         bar.columnconfigure(1, weight=1)
         self.bar = ttk.Progressbar(bar, length=220, maximum=1.0)
         self.bar.grid(row=0, column=0, sticky="w")
-        self.status = tk.StringVar(value="Ready")
+        self.status = tk.StringVar(value="Готово")
         ttk.Label(bar, textvariable=self.status, style="Muted.TLabel").grid(
             row=0, column=1, sticky="w", padx=10)
-        self.cancel_btn = ttk.Button(bar, text="Cancel", command=self._cancel,
+        self.cancel_btn = ttk.Button(bar, text="Отмена", command=self._cancel,
                                      state="disabled")
         self.cancel_btn.grid(row=0, column=2, sticky="e")
 
@@ -800,17 +870,19 @@ class App(tk.Tk):
         if not hasattr(self, "tree"):
             return                      # placeholder fires before the list
         q = self.search.get().strip().lower()
-        if q == "search bases":
+        if q == SEARCH_HINT.lower():
             q = ""
         self.tree.delete(*self.tree.get_children())
         for region in REGIONS:
             items = [b for b in BASES if b.region == region and (
                 not q or q in b.name.lower() or q in b.country.lower()
+                or q in COUNTRY_LABEL.get(b.country, "").lower()
                 or q in b.key)]
             if not items:
                 continue
             rid = f"region:{region}"
-            self.tree.insert("", "end", iid=rid, text=region, open=True)
+            self.tree.insert("", "end", iid=rid,
+                             text=REGION_LABEL.get(region, region), open=True)
             for b in items:
                 self.tree.insert(rid, "end", iid=b.key,
                                  text=f"{b.name}  ·  {_short_country(b.country)}",
@@ -826,12 +898,13 @@ class App(tk.Tk):
             last = rep.passes[-1]
             pct = (f" · {last.in_port / rep.usual_in_port:.0%}"
                    if rep.usual_in_port else "")
-            return f"{last.in_port} ships{pct}"
+            return f"{_ships(last.in_port)}{pct}"
         meta = store.load_meta(BY_KEY[key])
         if meta.get("summary"):
             return meta["summary"].replace("~", "")
         n = len(meta.get("passes", []))
-        return f"{n} passes" if n else "not downloaded"
+        return (f"{n} {_plural(n, 'пролёт', 'пролёта', 'пролётов')}" if n
+                else "не загружено")
 
     def _update_row(self, key: str) -> None:
         if self.tree.exists(key):
@@ -878,8 +951,9 @@ class App(tk.Tk):
 
     def _submit(self, label: str, fn, done=None) -> None:
         if self.busy:
-            messagebox.showinfo("Busy", "Another job is running. Wait for it "
-                                        "or press Cancel.")
+            messagebox.showinfo("Занято", "Выполняется другая задача. "
+                                          "Дождитесь её завершения или "
+                                          "нажмите «Отмена».")
             return
         self.busy = True
         self.cancel.clear()
@@ -920,26 +994,26 @@ class App(tk.Tk):
                         if a is not None:
                             a(b)
                     elif kind == "cancelled":
-                        self.status.set("Cancelled")
+                        self.status.set("Отменено")
                         self.bar["value"] = 0.0
                     else:
-                        self.status.set(f"Error: {b}")
-                        messagebox.showerror("Something went wrong", str(b))
+                        self.status.set(f"Ошибка: {b}")
+                        messagebox.showerror("Что-то пошло не так", str(b))
         except queue.Empty:
             pass
         self.after(100, self._poll)
 
     def _cancel(self) -> None:
         self.cancel.set()
-        self.status.set("Cancelling…")
+        self.status.set("Отмена…")
 
     # =============================================================== actions
     def _startup(self) -> None:
         if not _ui_state().get("tour_done"):
             self.after(600, lambda: Tour(self))
         if not radar.have_credentials():
-            self.status.set("Add your free Copernicus key in Settings to "
-                            "download radar passes.")
+            self.status.set("Добавьте бесплатный ключ Copernicus в "
+                            "«Настройках», чтобы загружать пролёты радара.")
         first = next((b.key for b in BASES
                       if store.load_meta(b).get("passes")), "norfolk")
         if self.tree.exists(first):
@@ -957,18 +1031,20 @@ class App(tk.Tk):
     def _open_base(self, key: str) -> None:
         b = BY_KEY[key]
         self.base_title.set(f"{b.name}")
-        self.base_sub.set(f"{b.country}  ·  {b.note}")
+        self.base_sub.set(f"{COUNTRY_LABEL.get(b.country, b.country)}  ·  "
+                          f"{b.note}")
         if key in self.reports:
             self._show_report(self.reports[key])
             return
-        self._clear_views(f"No analysis yet for {b.name}.")
+        self._clear_views(f"Для базы {b.name} ещё нет анализа.")
         if len(store.known_passes(b)) < 4:
             self._clear_views(
-                f"No radar passes downloaded for {b.name} yet.\n\nPress "
-                f"'Update base' to download them (free, one to three minutes).")
+                f"Для базы {b.name} ещё не загружены пролёты радара.\n\n"
+                f"Нажмите «Обновить базу», чтобы загрузить их (бесплатно, "
+                f"от одной до трёх минут).")
             return
         months = self._months()
-        self._submit(f"Analysing {b.name}…",
+        self._submit(f"Анализ: {b.name}…",
                      lambda: store.analyse_base(b, months, self._progress,
                                                 self.cancel),
                      self._analysed)
@@ -980,7 +1056,7 @@ class App(tk.Tk):
         last = rep.passes[-1]
         pct = (f" · {last.in_port / rep.usual_in_port:.0%}"
                if rep.usual_in_port else "")
-        meta["summary"] = f"{last.in_port} ships{pct}"
+        meta["summary"] = f"{_ships(last.in_port)}{pct}"
         store.save_meta(b, meta)
         self._update_row(rep.key)
         self.status.set(rep.headline)
@@ -989,15 +1065,15 @@ class App(tk.Tk):
 
     def _update_current(self) -> None:
         if not self.current:
-            messagebox.showinfo("Pick a base", "Select a base in the list.")
+            messagebox.showinfo("Выберите базу", "Выберите базу в списке.")
             return
         self._update_keys([self.current])
 
     def _update_checked(self) -> None:
         keys = [b.key for b in BASES if b.key in self.checked]
         if not keys:
-            messagebox.showinfo("Nothing ticked",
-                                "Tick bases in the Compare column first.")
+            messagebox.showinfo("Ничего не отмечено",
+                                "Сначала отметьте базы в столбце «СРАВН».")
             return
         self._update_keys(keys)
 
@@ -1022,12 +1098,12 @@ class App(tk.Tk):
             return out
 
         def done(reps):
-            self.status.set(f"Updated {len(reps)} base(s). "
+            self.status.set(f"Обновлено баз: {len(reps)}. "
                             + (reps[-1].headline if reps else ""))
             if len(keys) > 1:
                 self._compare()
 
-        self._submit(f"Updating {len(keys)} base(s)…", job, done)
+        self._submit(f"Обновление баз: {len(keys)}…", job, done)
 
     # ================================================================ views
     def _clear_views(self, msg: str) -> None:
@@ -1057,14 +1133,17 @@ class App(tk.Tk):
         charts.draw_berths(self.bfig, rep)
         self.bcanvas.draw_idle()
         st = rep.static_hulls
+        nb = len(rep.berths)
         self.berth_note.set(
-            f"{len(rep.berths)} berths. "
-            + (f"{len(st)} ship-shaped object(s) bright on every pass "
-               f"({', '.join(f'{h.length_m:.0f} m' for h in st)}) are "
-               f"counted as present throughout; they do not appear in this "
-               f"grid because they never changed." if st else "")
-            + " A berth is a place beside a pier or quay that was empty on "
-              "some passes and held a hull on others.")
+            f"{nb} " + _plural(nb, "причальное место", "причальных места",
+                               "причальных мест") + ". "
+            + (f"Объекты в форме корабля, яркие на каждом пролёте "
+               f"({len(st)}: {', '.join(f'{h.length_m:.0f} м' for h in st)}), "
+               f"считаются присутствующими всё время; в этой сетке их нет, "
+               f"потому что они не менялись." if st else "")
+            + " Причальное место — участок у пирса или причальной стенки, "
+              "который на одних пролётах был пуст, а на других занят "
+              "корпусом.")
         self._fill_events()
         self._fill_carriers(rep)
         self.view_pass = len(rep.passes) - 1
@@ -1078,28 +1157,29 @@ class App(tk.Tk):
         lo, hi = normal_range(rep)
         k = self.kpi
         k["now"][0].set(f"{last.in_port}")
-        k["now"][2].set(f"on {last.when:%d %b %Y}"
-                        + (f" · {last.static_n} present throughout"
+        k["now"][2].set(f"на {_d(last.when, '%d %b %Y')}"
+                        + (f" · всё время на месте: {last.static_n}"
                            if last.static_n else ""))
         k["usual"][0].set(f"{usual:.0f}")
-        k["usual"][2].set(f"normal range {lo:.0f}–{hi:.0f}")
+        k["usual"][2].set(f"норма {lo:.0f}–{hi:.0f}")
         if prev is not None:
             d = last.in_port - prev.in_port
+            days = (last.when - prev.when).days
             k["delta"][0].set(f"{d:+d}")
-            k["delta"][2].set(f"since {prev.when:%d %b} "
-                              f"({(last.when - prev.when).days} days)")
+            k["delta"][2].set(f"с {_d(prev.when, '%d %b')} "
+                              f"({days} {_plural(days, 'день', 'дня', 'дней')})")
         else:
             k["delta"][0].set("–")
             k["delta"][2].set("")
         k["carriers"][0].set(f"{last.carriers}")
-        k["carriers"][2].set("hulls both long and wide")
-        k["metres"][0].set(f"{last.occupied_m / 1000:.1f} km")
-        k["metres"][2].set("measured, steadier than a count")
-        q = ("good" if last.good else
-             "rough water" if last.rough else
-             "bad image" if last.poor else "partial view")
+        k["carriers"][2].set("корпуса и длинные, и широкие")
+        k["metres"][0].set(f"{last.occupied_m / 1000:.1f} км")
+        k["metres"][2].set("измерено, стабильнее подсчёта")
+        q = ("хороший" if last.good else
+             "волнение" if last.rough else
+             "плохой снимок" if last.poor else "частичный обзор")
         k["quality"][0].set(q)
-        k["quality"][2].set(f"{last.when:%d %b %H:%M} UTC · view "
+        k["quality"][2].set(f"{_d(last.when, '%d %b %H:%M')} UTC · ракурс "
                             f"{last.p.geometry}")
 
     def _fill_recent(self, rep: BaseReport) -> None:
@@ -1110,15 +1190,15 @@ class App(tk.Tk):
         evs.sort(key=lambda e: (e.t1, e.severity), reverse=True)
         self._recent_map = {}
         if not evs:
-            t.insert("end", "Nothing notable in this period.\n", "d")
+            t.insert("end", "За этот период ничего заметного.\n", "d")
         for k, e in enumerate(evs[:12]):
             tag = f"ev{k}"
             self._recent_map[tag] = e
-            t.insert("end", f"{e.t1:%d %b}  ", "d")
+            t.insert("end", f"{_d(e.t1, '%d %b')}  ", "d")
             t.insert("end", e.title + "\n", ("h", "link", tag)
                      + (("sev3",) if e.severity >= 3 else ()))
             t.insert("end", f"{charts.kind_label(e.kind)} · "
-                            f"confidence {e.confidence}\n\n", "d")
+                            f"уверенность {_conf(e.confidence)}\n\n", "d")
         t.configure(state="disabled")
 
     def _recent_click(self, ev) -> None:
@@ -1133,14 +1213,14 @@ class App(tk.Tk):
     # --------------------------------------------------------------- events
     def _filtered(self, rep: BaseReport) -> list[Event]:
         sev_ok = {s for s, v in self.sev_vars.items() if v.get()}
-        kf = self.kind_filter.get()
+        kf = KIND_FILTERS.get(self.kind_filter.get(), "all")
         groups = {
             "all": None,
-            "arrivals and departures": ("arrived", "left", "left?",
-                                        "part-left", "part-arrived"),
-            "groups and level changes": charts.HEADLINE_KINDS,
-            "long stays": ("long-stay",),
-            "single sightings": ("visit",),
+            "moves": ("arrived", "left", "left?",
+                      "part-left", "part-arrived"),
+            "groups": charts.HEADLINE_KINDS,
+            "long": ("long-stay",),
+            "single": ("visit",),
         }[kf]
         out = []
         for e in rep.events:
@@ -1160,11 +1240,11 @@ class App(tk.Tk):
         evs = self._filtered(rep)
         for k, e in enumerate(sorted(evs, key=lambda e: e.t1, reverse=True)):
             iid = f"e{k}"
-            when = (f"{e.t1:%d %b %Y}" if e.t0 == e.t1 else
-                    f"{e.t0:%d %b} – {e.t1:%d %b %Y}")
+            when = (_d(e.t1, "%d %b %Y") if e.t0 == e.t1 else
+                    f"{_d(e.t0, '%d %b')} – {_d(e.t1, '%d %b %Y')}")
             sev = max(0, min(3, e.severity))
             self.ev_tree.insert("", "end", iid=iid, values=(
-                when, SEVERITY_LABEL[sev], e.title, e.confidence),
+                when, SEVERITY_LABEL[sev], e.title, _conf(e.confidence)),
                 tags=(f"sev{sev}",))
             self._ev_ids[iid] = e
         self._pick_map = charts.draw_activity(self.fig, rep, evs,
@@ -1209,32 +1289,34 @@ class App(tk.Tk):
             d.insert("end", name.upper() + "\n", "field")
             d.insert("end", text + "\n\n", tag)
 
-        when = (f"{e.t1:%d %B %Y}" if e.t0 == e.t1 else
-                f"between the passes of {e.t0:%d %B} and {e.t1:%d %B %Y}")
-        field("What", e.text)
-        field("When", when + ". Radar passes are 6–12 days apart, so the "
-                      "exact day is not known.")
+        when = (_d(e.t1, "%d %B %Y") if e.t0 == e.t1 else
+                f"между пролётами {_d(e.t0, '%d %B')} и "
+                f"{_d(e.t1, '%d %B %Y')}")
+        field("Что", e.text)
+        field("Когда", when + ". Пролёты радара идут с интервалом 6–12 "
+                       "дней, поэтому точный день неизвестен.")
         if e.lon is not None:
-            field("Where", f"{abs(e.lat):.4f}°{'N' if e.lat >= 0 else 'S'}, "
-                           f"{abs(e.lon):.4f}°{'E' if e.lon >= 0 else 'W'}"
-                           + (f" · berth {e.berth}" if e.berth else
-                              " · open water"))
+            field("Где", f"{abs(e.lat):.4f}° {'с. ш.' if e.lat >= 0 else 'ю. ш.'}, "
+                         f"{abs(e.lon):.4f}° {'в. д.' if e.lon >= 0 else 'з. д.'}"
+                         + (f" · причал {e.berth}" if e.berth else
+                            " · открытая вода"))
         if e.length_m:
             what = interpret(e.length_m, e.width_m or 40.0)
-            field("Size reading", f"{e.length_m:.0f} m long"
-                  + (f", {e.width_m:.0f} m wide" if e.width_m else "")
-                  + f" on radar (±{0.12 * e.length_m + 15:.0f} m). "
+            field("Размер", f"длина {e.length_m:.0f} м"
+                  + (f", ширина {e.width_m:.0f} м" if e.width_m else "")
+                  + f" по радару (±{0.12 * e.length_m + 15:.0f} м). "
                   + what["text"][:1].upper() + what["text"][1:] + ".")
         if rep is not None and e.before >= 0 and e.after >= 0:
-            field("Evidence", f"The pass of {rep.passes[e.before].when:%d %b}"
-                              f" shows the 'before' state and "
-                              f"{rep.passes[e.after].when:%d %b} the 'after' "
-                              f"state. Press 'Show in radar view' to see "
-                              f"both with the hull outlined.")
+            field("Доказательства",
+                  f"Пролёт {_d(rep.passes[e.before].when, '%d %b')} "
+                  f"показывает состояние «до», а "
+                  f"{_d(rep.passes[e.after].when, '%d %b')} — «после». "
+                  f"Нажмите «Показать на радаре», чтобы увидеть оба "
+                  f"с обведённым корпусом.")
         tag = {"high": "green", "medium": "amber", "low": "red"}.get(
             e.confidence, "body")
-        field("Confidence", f"{e.confidence}" + (f" — {e.why}" if e.why
-                                                 else ""), tag)
+        field("Уверенность", _conf(e.confidence)
+              + (f" — {e.why}" if e.why else ""), tag)
 
     # ---------------------------------------------------------------- berths
     def _on_berth_click(self, ev) -> None:
@@ -1251,7 +1333,7 @@ class App(tk.Tk):
     # ----------------------------------------------------------------- radar
     def _show_event_radar(self) -> None:
         if self.selected_event is None:
-            messagebox.showinfo("Pick an event", "Select an event first.")
+            messagebox.showinfo("Выберите событие", "Сначала выберите событие.")
             return
         self._select_view(3)
         self._draw_radar()
@@ -1288,18 +1370,20 @@ class App(tk.Tk):
             return
         e = self.selected_event
         if e is not None and e.before >= 0 and e.after >= 0:
-            panels = [(e.before, f"before · {rep.passes[e.before].when:%d %b %Y}"
-                                 f" · {rep.passes[e.before].in_port} ships"),
-                      (e.after, f"after · {rep.passes[e.after].when:%d %b %Y}"
-                                f" · {rep.passes[e.after].in_port} ships")]
-            self.radar_title.set(f"{e.title}  ({e.t0:%d %b} → {e.t1:%d %b})")
+            pb, pa = rep.passes[e.before], rep.passes[e.after]
+            panels = [(e.before, f"до · {_d(pb.when, '%d %b %Y')}"
+                                 f" · {_ships(pb.in_port)}"),
+                      (e.after, f"после · {_d(pa.when, '%d %b %Y')}"
+                                f" · {_ships(pa.in_port)}")]
+            self.radar_title.set(f"{e.title}  ({_d(e.t0, '%d %b')} → "
+                                 f"{_d(e.t1, '%d %b')})")
         else:
             i = self.view_pass if self.view_pass >= 0 else len(rep.passes) - 1
             p = rep.passes[i]
-            panels = [(i, f"{p.when:%d %b %Y %H:%M} UTC · view "
-                          f"{p.p.geometry} · {p.in_port} ships"
-                          + (" · rough water" if p.rough else ""))]
-            self.radar_title.set(f"Pass {i + 1} of {len(rep.passes)}")
+            panels = [(i, f"{_d(p.when, '%d %b %Y %H:%M')} UTC · ракурс "
+                          f"{p.p.geometry} · {_ships(p.in_port)}"
+                          + (" · волнение" if p.rough else ""))]
+            self.radar_title.set(f"Пролёт {i + 1} из {len(rep.passes)}")
         charts.draw_radar(self.rfig, rep, panels,
                           photo=self._photo(rep) if self.opt_photo.get()
                           else None,
@@ -1325,7 +1409,7 @@ class App(tk.Tk):
 
         self._select_view(4)
         if missing:
-            self._submit("Analysing ticked bases…", job,
+            self._submit("Анализ отмеченных баз…", job,
                          lambda _k: self._draw_compare(keys))
         else:
             self._draw_compare(keys)
@@ -1336,18 +1420,18 @@ class App(tk.Tk):
         self.ccanvas.draw_idle()
         self.ctext.delete("1.0", "end")
         if not reps:
-            self.ctext.insert("1.0", "Tick bases in the Compare column, then "
-                                     "press Refresh. Bases without radar "
-                                     "passes on disk need 'Update ticked' "
-                                     "first.")
+            self.ctext.insert("1.0", "Отметьте базы в столбце «СРАВН» и "
+                                     "нажмите «Обновить». Для баз без "
+                                     "загруженных пролётов сначала нажмите "
+                                     "«Обновить отмеченные».")
             return
         lines = compare(reps)
-        self.ctext.insert("1.0", "Red lines: group departures, level falls "
-                                 "or unusually empty periods. Green: the "
-                                 "opposite.\n\n"
+        self.ctext.insert("1.0", "Красные линии: групповые уходы, падения "
+                                 "уровня или необычно пустые периоды. "
+                                 "Зелёные: обратное.\n\n"
                           + ("\n\n".join(lines) if lines else
-                             "Nothing happened at several bases in the same "
-                             "week."))
+                             "Ни на одной неделе ничего не происходило "
+                             "сразу на нескольких базах."))
 
     # ------------------------------------------------------------------ misc
     def _save_report(self) -> None:
@@ -1355,52 +1439,55 @@ class App(tk.Tk):
         if rep is None:
             return
         path = filedialog.asksaveasfilename(
-            defaultextension=".txt",
+            title="Сохранить отчёт", defaultextension=".txt",
+            filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")],
             initialfile=f"{rep.key}_{datetime.now(timezone.utc):%Y%m%d}.txt")
         if not path:
             return
         try:
             write_report(path, rep)
         except OSError as exc:
-            messagebox.showerror("Could not save the report",
+            messagebox.showerror("Не удалось сохранить отчёт",
                                  f"{path}\n\n{exc}")
             return
-        self.status.set(f"Saved {path}")
+        self.status.set(f"Сохранено: {path}")
 
     def _refresh_key_status(self) -> None:
-        self.key_status.set("Copernicus key: "
-                            + ("set" if radar.have_credentials()
-                               else "not set — see Settings"))
+        self.key_status.set("Ключ Copernicus: "
+                            + ("задан" if radar.have_credentials()
+                               else "не задан — см. «Настройки»"))
 
     def _settings(self) -> None:
         d = tk.Toplevel(self)
-        d.title("Settings")
+        d.title("Настройки")
         d.transient(self)
         d.configure(background=BG)
         fr = ttk.Frame(d, padding=16)
         fr.pack(fill="both", expand=True)
-        ttk.Label(fr, text="Copernicus Data Space (free)",
+        ttk.Label(fr, text="Copernicus Data Space (бесплатно)",
                   style="Title.TLabel").grid(row=0, column=0, columnspan=2,
                                              sticky="w")
-        ttk.Label(fr, wraplength=480, style="Muted.TLabel", text=(
-            "Register at dataspace.copernicus.eu, open Sentinel Hub → User "
-            "settings → OAuth clients, create a client, and paste its id and "
-            "secret here. Stored only on this computer, in your user "
-            "profile.")).grid(row=1, column=0, columnspan=2, sticky="w",
-                          pady=(4, 10))
+        ttk.Label(fr, wraplength=520, style="Muted.TLabel", text=(
+            "Зарегистрируйтесь на dataspace.copernicus.eu, откройте "
+            "Sentinel Hub → User settings → OAuth clients, создайте клиента "
+            "и вставьте сюда его id и secret. Данные хранятся только на этом "
+            "компьютере, в вашем профиле пользователя.")).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 10))
         cid = tk.StringVar()
         sec = tk.StringVar()
-        ttk.Label(fr, text="Client id").grid(row=2, column=0, sticky="w")
+        ttk.Label(fr, text="ID клиента").grid(row=2, column=0, sticky="w",
+                                              padx=(0, 8))
         ttk.Entry(fr, textvariable=cid, width=50).grid(row=2, column=1,
                                                        pady=2)
-        ttk.Label(fr, text="Client secret").grid(row=3, column=0, sticky="w")
+        ttk.Label(fr, text="Секрет клиента").grid(row=3, column=0, sticky="w",
+                                                  padx=(0, 8))
         ttk.Entry(fr, textvariable=sec, width=50, show="•").grid(row=3,
                                                                  column=1,
                                                                  pady=2)
         cur = tk.StringVar()
 
         def refresh():
-            cur.set(f"Currently: id "
+            cur.set(f"Сейчас: id "
                     f"{credentials.masked('copernicus', 'client_id')}, secret "
                     f"{credentials.masked('copernicus', 'client_secret')}")
         refresh()
@@ -1423,23 +1510,23 @@ class App(tk.Tk):
                 radar._TOKEN["value"] = None
             refresh()
             self._refresh_key_status()
-            msg.set(f"Saved to {credentials.CREDENTIALS_PATH}.")
+            msg.set(f"Сохранено в {credentials.CREDENTIALS_PATH}.")
 
         def test():
             try:
                 radar.get_token(force=True)
-                msg.set("Connected to Copernicus: the key works.")
+                msg.set("Подключение к Copernicus есть: ключ работает.")
             except Exception as exc:
                 msg.set(str(exc))
 
         bf = ttk.Frame(fr)
         bf.grid(row=5, column=0, columnspan=2, sticky="w")
-        ttk.Button(bf, text="Save", style="Accent.TButton",
+        ttk.Button(bf, text="Сохранить", style="Accent.TButton",
                    command=save).pack(side="left")
-        ttk.Button(bf, text="Test connection", command=test).pack(
+        ttk.Button(bf, text="Проверить подключение", command=test).pack(
             side="left", padx=6)
-        ttk.Button(bf, text="Close", command=d.destroy).pack(side="left")
-        ttk.Label(fr, textvariable=msg, wraplength=480).grid(
+        ttk.Button(bf, text="Закрыть", command=d.destroy).pack(side="left")
+        ttk.Label(fr, textvariable=msg, wraplength=520).grid(
             row=6, column=0, columnspan=2, sticky="w", pady=6)
 
 
@@ -1461,79 +1548,80 @@ def write_report(path, rep: BaseReport) -> None:
 
 def report_text(rep: BaseReport) -> str:
     out = [rep.name, "=" * len(rep.name), rep.headline, ""]
-    out += ["Notes:"] + [f"  - {n}" for n in rep.notes] + [""]
+    out += ["Примечания:"] + [f"  - {n}" for n in rep.notes] + [""]
     if rep.regimes:
-        out.append("Level periods:")
+        out.append("Периоды уровня:")
         for r in rep.regimes:
-            out.append(f"  {rep.passes[r['start']].when:%Y-%m-%d} to "
-                       f"{rep.passes[r['end']].when:%Y-%m-%d}: about "
-                       f"{r['level']:.0f} large ships ({r['n']} passes)")
+            out.append(f"  {rep.passes[r['start']].when:%Y-%m-%d} — "
+                       f"{rep.passes[r['end']].when:%Y-%m-%d}: около "
+                       f"{r['level']:.0f} крупных кораблей "
+                       f"(пролётов: {r['n']})")
         out.append("")
-    out.append("Events, newest first:")
+    out.append("События, сначала новые:")
     for e in sorted(rep.events, key=lambda e: e.t1, reverse=True):
         if e.kind == "visit":
             continue
         out.append(f"\n[{e.t0:%Y-%m-%d} -> {e.t1:%Y-%m-%d}] {e.title}  "
-                   f"(confidence {e.confidence})")
+                   f"(уверенность {_conf(e.confidence)})")
         out.append(f"  {e.text}")
         if e.why:
-            out.append(f"  Why: {e.why}")
-    out.append("\nPer pass:")
+            out.append(f"  Почему: {e.why}")
+    out.append("\nПо пролётам:")
     for p in rep.passes:
-        out.append(f"  {p.when:%Y-%m-%d %H:%M}Z  view {p.p.geometry:8s} "
-                   f"{p.in_port:3d} large ships, {p.carriers} carrier(s), "
-                   f"{p.occupied_m / 1000:.1f} km of hull"
-                   + ("  rough water" if p.rough else ""))
+        out.append(f"  {p.when:%Y-%m-%d %H:%M}Z  ракурс {p.p.geometry:8s} "
+                   f"крупных кораблей: {p.in_port:3d}, авианосцев: "
+                   f"{p.carriers}, корпусов: {p.occupied_m / 1000:.1f} км"
+                   + ("  волнение" if p.rough else ""))
     return "\n".join(out) + "\n"
 
 
-METHOD = """# What this program does
+METHOD = """# Что делает эта программа
 
-It watches naval bases with Sentinel-1, a free European radar satellite. Every 6 to 12 days the satellite passes over a base at the same time of day, from the same angle, and takes a radar picture. Radar sees through cloud and works at night, so no pass is lost to weather.
+Она следит за военно-морскими базами с помощью Sentinel-1 — бесплатного европейского радарного спутника. Каждые 6–12 дней спутник пролетает над базой в одно и то же время суток, под тем же углом, и делает радарный снимок. Радар видит сквозь облака и работает ночью, поэтому ни один пролёт не теряется из-за погоды.
 
-# How ships are found
+# Как находят корабли
 
-On radar, calm water is dark and a steel hull is very bright, but water beside a pier is never dark: the pier's own echo lifts it by 5 to 12 dB even when the berth is empty. So nothing is compared with open water. Instead the program learns, for every 10 m pixel, the emptiest it has ever looked across all the passes (the 3rd percentile), after removing each viewing angle's overall brightness offset and each pass's overall gain. A ship is a stretch of pixels that is at least 6 dB brighter than its own emptiest state, with a core at least 10 dB brighter and a peak of at least 18 dB over open water. Neighbouring ships are kept apart by giving the faint halo around each bright core to the nearest core, so two ships at one pier do not merge into one.
+На радаре спокойная вода тёмная, а стальной корпус очень яркий, но вода у пирса никогда не бывает тёмной: собственное эхо пирса поднимает её яркость на 5–12 дБ даже при пустом причале. Поэтому ничего не сравнивается с открытой водой. Вместо этого программа запоминает для каждого 10-метрового пикселя самое «пустое» его состояние за все пролёты (3-й процентиль), предварительно убрав общий сдвиг яркости каждого угла обзора и общее усиление каждого пролёта. Корабль — это участок пикселей минимум на 6 дБ ярче собственного пустого состояния, с ядром ярче минимум на 10 дБ и пиком минимум на 18 дБ выше открытой воды. Соседние корабли разделяются: слабый ореол вокруг каждого яркого ядра отдаётся ближайшему ядру, поэтому два корабля у одного пирса не сливаются в один.
 
-Every one of those numbers was set against PlanetScope photographs of Norfolk taken within hours of a radar pass (four clear same-day pairs, 60 ships): hull recall 0.65 at precision 0.95, and a correlation of 0.73 between radar and photo berth occupancy. The first version, which compared pixels with open water, scored 0.21 / 0.41 / 0.10 on the same photos.
+Каждое из этих чисел подобрано по снимкам PlanetScope базы Норфолк, сделанным в пределах нескольких часов от пролёта радара (четыре ясные пары в один день, 60 кораблей): полнота обнаружения корпусов 0,65 при точности 0,95 и корреляция 0,73 между занятостью причалов по радару и по фото. Первая версия, сравнивавшая пиксели с открытой водой, на тех же снимках давала 0,21 / 0,41 / 0,10.
 
-# What a berth is
+# Что такое причальное место
 
-A berth is a place beside a pier or quay that was empty on some passes and held a hull on others. Piers, quays, cranes and land are "structure": bright even at their emptiest, and never counted as ships. A ship that never left during the whole record is bright at its emptiest too, so to this method it looks like structure. Where such a stretch is as bright as a hull (18 dB and up; piers are 9 to 15) and shaped like one, it is reported as "present throughout" and counted as a ship, with the caveat that a crane or shed can look the same.
+Причальное место — участок у пирса или причальной стенки, который на одних пролётах был пуст, а на других занят корпусом. Пирсы, причальные стенки, краны и суша — это «сооружения»: они яркие даже в самом пустом состоянии и никогда не считаются кораблями. Корабль, ни разу не уходивший за всю запись, тоже ярок в своём пустом состоянии, поэтому для этого метода он выглядит как сооружение. Если такой участок ярок как корпус (от 18 дБ; пирсы — 9–15) и имеет форму корпуса, он отмечается как «на месте всё время» и считается кораблём — с оговоркой, что кран или ангар могут выглядеть так же.
 
-# How sizes are read
+# Как оценивают размер
 
-Radar measures length to about 10-15%, so the program never claims an exact class. It uses size and shape: a carrier is long AND wide (its flight deck is ~75 m across); two destroyers moored bow to stern are long but narrow; two ships side by side are short but wide. Every explanation says which reading it chose and why.
+Радар измеряет длину с точностью около 10–15 %, поэтому программа никогда не называет точный класс. Она опирается на размер и форму: авианосец длинный И широкий (его лётная палуба шириной ~75 м); два эсминца, стоящие нос к корме, длинные, но узкие; два корабля борт к борту короткие, но широкие. Каждое пояснение говорит, какую оценку программа выбрала и почему.
 
-# How anomalies are found
+# Как находят аномалии
 
-Level periods: the series of ships-in-port is cut into periods of steady level by exact optimal partitioning (every possible set of cuts is scored; the cost is each period's spread around its median, with a penalty per cut scaled to the series' own noise). A fall from 24 to 15 that holds for twelve passes is a level shift; one odd pass is not. Periods outside the normal range (the usual level ± 2.5 robust standard deviations) are flagged as unusually empty or full.
+Периоды уровня: ряд «кораблей в порту» разбивается на периоды устойчивого уровня точным оптимальным разбиением (оцениваются все возможные наборы разрезов; стоимость — разброс каждого периода вокруг его медианы плюс штраф за каждый разрез, масштабированный по собственному шуму ряда). Падение с 24 до 15, державшееся двенадцать пролётов, — это смена уровня; один странный пролёт — нет. Периоды вне нормы (обычный уровень ± 2,5 робастных стандартных отклонения) помечаются как необычно пустые или полные.
 
-Group movements: more berths emptying between two passes than this base normally sees. A carrier-sized hull leaving with two or more escorts in the same interval is reported as a carrier group sailing.
+Групповые движения: между двумя пролётами освободилось больше причальных мест, чем обычно бывает на этой базе. Уход корпуса размером с авианосец вместе с двумя или более кораблями сопровождения в том же интервале отмечается как выход авианосной группы.
 
-Long stays: a ship at a berth for twice the typical stay seen at that same berth.
+Долгие стоянки: корабль стоит у причала вдвое дольше типичной стоянки на этом же причальном месте.
 
-Confidence: every event says what it rests on. A departure is "high" when the ship was seen on two or more passes and the berth then imaged empty on two; "low" when only one pass has shown it empty. An arrival seen once is "medium" until the next pass.
+Уверенность: каждое событие указывает, на чём оно основано. Уход — «высокая», если корабль был виден на двух и более пролётах, а затем причал дважды оказался пустым; «низкая», если пустым его показал только один пролёт. Приход, замеченный один раз, — «средняя» до следующего пролёта.
 
-# Experimental sea search
+# Экспериментальный поиск в море
 
-After a carrier-sized departure, the sea search inspects available radar products around the base within its time, area and request limits. It fetches 60 km tiles at 50 m output spacing and compares bright targets with a local sea background. Candidates at least 200 m long may be re-measured at 10 m output spacing from the same acquisition. A successful re-measurement is a size check, not an independent observation or identification: the underlying IW GRD resolution is about 20 by 22 m.
+После ухода корабля размером с авианосец поиск в море просматривает доступные радарные продукты вокруг базы в пределах своих ограничений по времени, площади и числу запросов. Он загружает плитки 60 км с шагом 50 м и сравнивает яркие цели с местным морским фоном. Кандидаты длиной от 200 м могут быть перемерены с шагом 10 м по той же съёмке. Успешное повторное измерение — это проверка размера, а не независимое наблюдение или опознание: исходное разрешение IW GRD около 20 на 22 м.
 
-Large, wide targets are only size candidates. The current association rule accepts the first size candidate with compatible timing, then checks later candidates against it; it does not match dimensions to the original departure. Similar dimensions, nearby smaller targets and compatible timing cannot establish that two detections are the same vessel or that nearby vessels are escorts. Dashed map links show tentative timing associations, not a verified route. The search has sparse coverage, especially offshore; missing data, request limits and unavailable checks are reported. White map boxes bound usable pixels in fetched tiles and may contain gaps. The berth accuracy figures above do not validate this experimental search.
+Крупные широкие цели — лишь кандидаты по размеру. Текущее правило связывания принимает первого кандидата по размеру с подходящим временем, а затем сверяет с ним последующих; размеры с исходным уходом оно не сопоставляет. Похожие размеры, меньшие цели поблизости и подходящее время не доказывают, что два обнаружения — одно и то же судно или что суда рядом — сопровождение. Пунктирные связи на карте — предварительные связи по времени, а не подтверждённый маршрут. Покрытие поиска разреженное, особенно вдали от берега; пропуски данных, лимиты запросов и недоступные проверки указываются в отчёте. Белые рамки на карте ограничивают пригодные пиксели загруженных плиток и могут содержать пробелы. Приведённые выше показатели точности по причалам к этому экспериментальному поиску не относятся.
 
-# Where a ship can float
+# Где корабль может быть на плаву
 
-Radar cannot tell a moored ship from a stack of shipping containers. Measured over a year of passes at two ports, the two are indistinguishable on every radar feature the detector has: median brightness 13.2 vs 13.4 dB, emptiest state 1.4 vs 0.7 dB, swing 18.0 vs 18.7 dB. Both are metal boxes on a flat surface. Elevation models cannot settle it either, because reclaimed container terminals read as 0 m in every free model and are mapped as open sea.
+Радар не отличает пришвартованный корабль от штабеля морских контейнеров. По году пролётов над двумя портами они неразличимы по всем признакам, доступным детектору: медианная яркость 13,2 против 13,4 дБ, самое пустое состояние 1,4 против 0,7 дБ, размах 18,0 против 18,7 дБ. И то и другое — металлические коробки на ровной поверхности. Модели рельефа тоже не помогают: намывные контейнерные терминалы во всех бесплатных моделях имеют высоту 0 м и отмечены как открытое море.
 
-So Keelix asks a land-cover map instead: ESA WorldCover, free and 10 m, with an explicit permanent-water class. A detection must overlap mapped water to count. This keeps 100% of the real ships at the validated location and removes 63% of a container yard's blocks. WorldCover is a 2021 product, so land reclaimed after that still reads as water, and the notes say when no land-cover map could be fetched.
+Поэтому Keelix опирается на карту земного покрова: ESA WorldCover, бесплатную, с разрешением 10 м и отдельным классом постоянной воды. Обнаружение засчитывается, только если оно перекрывает воду на карте. Это сохраняет 100 % настоящих кораблей в проверенном месте и убирает 63 % блоков контейнерного терминала. WorldCover — продукт 2021 года, поэтому суша, намытая позже, всё ещё считается водой; в примечаниях указывается, если карту покрова загрузить не удалось.
 
-# What it cannot do
+# Чего программа не умеет
 
-It cannot name a ship or tell close classes apart. Ships moored side by side or end to end merge into one hull; the ship count is an estimate (metres of hull alongside is the steadier number). A ship that arrives and leaves between two passes is never seen. Arrival and departure dates are only known to the gap between passes. Submarines sit low in the water and echo weakly. Outside the US the free elevation data is coarser, so the land mask is more forgiving and the depth check may say it cannot trace the exit route.
+Она не может назвать корабль или различить близкие классы. Корабли, стоящие борт к борту или друг за другом, сливаются в один корпус; число кораблей — оценка (метры корпусов у причалов — более стабильный показатель). Корабль, пришедший и ушедший между двумя пролётами, не виден вовсе. Даты приходов и уходов известны лишь с точностью до интервала между пролётами. Подводные лодки сидят низко в воде и дают слабое эхо. За пределами США бесплатные данные о рельефе грубее, поэтому маска суши менее строгая, а проверка глубины может сообщить, что не удаётся проследить путь выхода.
 
-# Data
+# Данные
 
-Radar: Copernicus Sentinel-1, free (needs a free Copernicus account - Settings). Land and depth: NOAA global elevation mosaic, free, no account. The satellite photo under the radar view is Esri World Imagery, for orientation only; it is not from the same date.
+Радар: Copernicus Sentinel-1, бесплатно (нужен бесплатный аккаунт Copernicus — см. «Настройки»). Суша и глубины: глобальная мозаика рельефа NOAA, бесплатно, без аккаунта. Спутниковый снимок под радарным видом — Esri World Imagery, только для ориентации; он сделан не в ту же дату.
 """
 
 
@@ -1543,80 +1631,93 @@ Radar: Copernicus Sentinel-1, free (needs a free Copernicus account - Settings).
 UI_STATE = credentials.CONFIG_DIR / "ui.json"
 
 TOUR_STEPS = [
-    ("Welcome", None,
-     "This program watches naval bases with free Sentinel-1 radar. Every "
-     "6-12 days the satellite photographs each base from the same angle; "
-     "steel hulls are bright, water is dark, so the program can count the "
-     "large ships in port, follow each berth, and explain what changed.\n\n"
-     "This tour takes a minute and walks through every view. You can replay "
-     "it any time with the Tour button at the bottom of the sidebar."),
-    ("1 · Your free key", None,
-     "Radar comes from the Copernicus Data Space. It is free: register at "
-     "dataspace.copernicus.eu, open Sentinel Hub → User settings → OAuth "
-     "clients, create one, and paste its id and secret into Settings (top "
-     "right). The key is stored only on this computer.\n\n"
-     "Without it the program can still open bases that are already on disk."),
-    ("2 · Pick a base", None,
-     "The sidebar lists 45 bases grouped by region; the box above filters "
-     "them. Click a base to open it. The first time, press Update base: "
-     "twelve months of radar takes one to three minutes, and after that the "
-     "base opens instantly. The Latest column shows ships in port and how "
-     "that compares with the base's usual level.\n\n"
-     "The CMP column ticks a base for the Compare view and for 'Update "
-     "ticked'. Tick region ticks every base in the selected region."),
-    ("3 · Overview", 0,
-     "Six numbers first: ships in port now, the usual level, the change "
-     "since the last pass, carriers, metres of hull alongside, and the "
-     "quality of the latest pass.\n\n"
-     "The chart shows every radar pass. The band is the normal range, the "
-     "black line the trend, red triangles departures, green arrivals; marker "
-     "size follows the ship. Shaded periods are unusually empty or full. "
-     "Click any marker to read what happened. On the right, the latest "
-     "notable changes; click one to open it."),
-    ("4 · Berths", 1,
-     "The raw material. Each row is a berth beside a pier or quay, each "
-     "column a radar pass, and the colour is how much of the berth held a "
-     "hull. Amber columns are passes with rough water or a partial view. "
-     "Click a cell to open that pass in the Radar view.\n\n"
-     "Ships that never moved during the whole period are listed under the "
-     "grid as 'present throughout'."),
-    ("5 · Events", 2,
-     "Every arrival, departure, group movement, level shift and long stay, "
-     "newest first. Filter by level (Headlines down to Minor) and by type. "
-     "Each event opens a structured explanation: what, when, where, the "
-     "size reading, the evidence passes, and a confidence with the reason "
-     "for it.\n\n"
-     "Press 'Show in radar view' to see the before and after images with "
-     "the hull outlined. 'Save report' writes everything as text."),
-    ("6 · Radar", 3,
-     "The image behind any claim. Step through passes, or arrive here from "
-     "an event to see before and after side by side. Red outlines are hulls "
-     "found on that pass; the green one is the hull the event refers to; "
-     "dashed orange ones were present on every pass.\n\n"
-     "'Change vs empty state' shows what the detector actually looks at: "
-     "each pixel against its own emptiest state. The toolbar zooms and pans."),
-    ("7 · Compare", 4,
-     "Ticked bases on one time axis, each as a percentage of its own usual "
-     "level, so a small base and Norfolk can be read together. Red lines "
-     "mark group departures, level falls and unusually empty periods; green "
-     "the opposite. Below the chart, weeks in which several bases changed "
-     "together are called out."),
-    ("8 · Sea search", 5,
-     "Pick a carrier-sized departure to inspect available radar strips "
-     "around the base. Large, wide targets are size candidates; their "
-     "identity and any relationship to nearby vessels remain unverified.\n\n"
-     "Dashed links are tentative timing associations, not a verified "
-     "route. White boxes bound usable pixels and may contain gaps. Sparse "
-     "coverage and request limits can leave candidates unchecked. A search "
-     "usually takes 10-40 minutes and can be cancelled."),
-    ("9 · What to trust", 6,
-     "Measured against photographs of Norfolk: about two thirds of ships "
-     "are found, nine in ten detections are real, and ship counts per pass "
-     "match the photos to within one or two. The method cannot name ships, "
-     "cannot tell close classes apart, merges ships moored together, and "
-     "only dates events to the gap between passes.\n\n"
-     "The Method view has the full account. Every event says what its "
-     "confidence rests on; read that line before acting on it."),
+    ("Добро пожаловать", None,
+     "Эта программа следит за военно-морскими базами по бесплатным данным "
+     "радара Sentinel-1. Каждые 6–12 дней спутник снимает каждую базу под "
+     "одним и тем же углом; стальные корпуса яркие, вода тёмная, поэтому "
+     "программа может считать крупные корабли в порту, следить за каждым "
+     "причальным местом и объяснять, что изменилось.\n\n"
+     "Этот тур займёт минуту и покажет все виды. Его можно повторить в любой "
+     "момент кнопкой «Тур» внизу боковой панели."),
+    ("1 · Ваш бесплатный ключ", None,
+     "Радарные данные берутся из Copernicus Data Space. Это бесплатно: "
+     "зарегистрируйтесь на dataspace.copernicus.eu, откройте Sentinel Hub → "
+     "User settings → OAuth clients, создайте клиента и вставьте его id и "
+     "secret в «Настройки» (справа вверху). Ключ хранится только на этом "
+     "компьютере.\n\n"
+     "Без ключа программа всё равно открывает базы, уже сохранённые на "
+     "диске."),
+    ("2 · Выбор базы", None,
+     "На боковой панели 45 баз, сгруппированных по регионам; поле над "
+     "списком фильтрует их. Нажмите на базу, чтобы открыть её. В первый раз "
+     "нажмите «Обновить базу»: двенадцать месяцев радарных данных "
+     "загружаются от одной до трёх минут, а потом база открывается сразу. "
+     "Столбец «ПОСЛЕДНЕЕ» показывает число кораблей в порту и долю от "
+     "обычного уровня базы.\n\n"
+     "Столбец «СРАВН» отмечает базу для вида «Сравнение» и для кнопки "
+     "«Обновить отмеченные». «Отметить регион» отмечает все базы выбранного "
+     "региона."),
+    ("3 · Обзор", 0,
+     "Сначала шесть чисел: кораблей в порту сейчас, обычный уровень, "
+     "изменение с прошлого пролёта, авианосцы, метры корпусов у причалов и "
+     "качество последнего пролёта.\n\n"
+     "График показывает каждый пролёт радара. Полоса — норма, чёрная линия — "
+     "тренд, красные треугольники — уходы, зелёные — приходы; размер маркера "
+     "соответствует кораблю. Затенённые периоды — необычно пустые или "
+     "полные. Нажмите на любой маркер, чтобы прочитать, что произошло. "
+     "Справа — последние заметные изменения; нажмите на любое, чтобы "
+     "открыть его."),
+    ("4 · Причалы", 1,
+     "Исходный материал. Каждая строка — причальное место у пирса или "
+     "причальной стенки, каждый столбец — пролёт радара, а цвет показывает, "
+     "какая часть места была занята корпусом. Жёлтые столбцы — пролёты с "
+     "волнением или частичным обзором. Нажмите на ячейку, чтобы открыть этот "
+     "пролёт в виде «Радар».\n\n"
+     "Корабли, не двигавшиеся за весь период, перечислены под сеткой как "
+     "«на месте всё время»."),
+    ("5 · События", 2,
+     "Все приходы, уходы, групповые движения, смены уровня и долгие "
+     "стоянки, сначала новые. Фильтр по уровню (от «Главное» до «Мелкое») и "
+     "по типу. Каждое событие открывает структурированное пояснение: что, "
+     "когда, где, оценка размера, пролёты-доказательства и уверенность с "
+     "причиной.\n\n"
+     "Нажмите «Показать на радаре», чтобы увидеть снимки «до» и «после» с "
+     "обведённым корпусом. «Сохранить отчёт» записывает всё в текстовый "
+     "файл."),
+    ("6 · Радар", 3,
+     "Снимок, на котором основано любое утверждение. Листайте пролёты или "
+     "перейдите сюда из события, чтобы увидеть «до» и «после» рядом. "
+     "Красные контуры — корпуса, найденные на этом пролёте; зелёный — "
+     "корпус, к которому относится событие; оранжевый пунктир — корабли, "
+     "присутствовавшие на всех пролётах.\n\n"
+     "«Изменение к пустому состоянию» показывает то, на что действительно "
+     "смотрит детектор: каждый пиксель относительно его самого пустого "
+     "состояния. Панель инструментов позволяет масштабировать и сдвигать."),
+    ("7 · Сравнение", 4,
+     "Отмеченные базы на одной оси времени, каждая в процентах от своего "
+     "обычного уровня, поэтому небольшую базу и Норфолк можно читать вместе. "
+     "Красные линии отмечают групповые уходы, падения уровня и необычно "
+     "пустые периоды; зелёные — обратное. Под графиком выделены недели, "
+     "когда несколько баз менялись одновременно."),
+    ("8 · Поиск в море", 5,
+     "Выберите уход корабля размером с авианосец, чтобы проверить доступные "
+     "полосы радарной съёмки вокруг базы. Крупные широкие цели — кандидаты "
+     "по размеру; их личность и связь с судами поблизости остаются "
+     "неподтверждёнными.\n\n"
+     "Пунктирные связи — предварительные связи по времени, а не "
+     "подтверждённый маршрут. Белые рамки ограничивают пригодные пиксели и "
+     "могут содержать пробелы. Из-за разреженного покрытия и лимитов "
+     "запросов часть кандидатов может остаться непроверенной. Поиск обычно "
+     "занимает 10–40 минут, его можно отменить."),
+    ("9 · Чему доверять", 6,
+     "По сравнению со снимками Норфолка: находится около двух третей "
+     "кораблей, девять из десяти обнаружений настоящие, а число кораблей на "
+     "пролёт совпадает с фото с точностью до одного-двух. Метод не называет "
+     "корабли, не различает близкие классы, сливает корабли, стоящие вплотную, "
+     "и датирует события лишь интервалом между пролётами.\n\n"
+     "Полное описание — в виде «Метод». Каждое событие говорит, на чём "
+     "основана его уверенность; прочитайте эту строку, прежде чем "
+     "действовать."),
 ]
 
 
@@ -1642,7 +1743,7 @@ class Tour(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.step = 0
-        self.title("Tour")
+        self.title("Тур")
         self.configure(background=PANEL)
         self.resizable(False, False)
         if app.winfo_viewable():
@@ -1658,16 +1759,16 @@ class Tour(tk.Toplevel):
         self.body = tk.Text(fr, wrap="word", relief="flat", background=PANEL,
                             foreground=INK, insertbackground=INK,
                             selectbackground="#d6e4f5", selectforeground=INK,
-                            font=app.fonts["body"], width=58, height=12,
+                            font=app.fonts["body"], width=62, height=14,
                             bd=0, highlightthickness=0)
         self.body.pack(fill="both", expand=True)
         row = ttk.Frame(fr, style="Panel.TFrame")
         row.pack(fill="x", pady=(14, 0))
-        self.b_back = ttk.Button(row, text="Back", command=self.back)
+        self.b_back = ttk.Button(row, text="Назад", command=self.back)
         self.b_back.pack(side="left")
-        ttk.Button(row, text="Skip tour", command=self.finish).pack(
+        ttk.Button(row, text="Пропустить тур", command=self.finish).pack(
             side="left", padx=8)
-        self.b_next = ttk.Button(row, text="Next", style="Accent.TButton",
+        self.b_next = ttk.Button(row, text="Далее", style="Accent.TButton",
                                  command=self.next)
         self.b_next.pack(side="right")
         self.protocol("WM_DELETE_WINDOW", self.finish)
@@ -1687,7 +1788,7 @@ class Tour(tk.Toplevel):
 
     def show(self) -> None:
         title, view, text = TOUR_STEPS[self.step]
-        self.v_step.set(f"TOUR · {self.step + 1} OF {len(TOUR_STEPS)}")
+        self.v_step.set(f"ТУР · {self.step + 1} ИЗ {len(TOUR_STEPS)}")
         self.v_title.set(title)
         self.body.configure(state="normal")
         self.body.delete("1.0", "end")
@@ -1696,8 +1797,8 @@ class Tour(tk.Toplevel):
         if view is not None:
             self.app._select_view(view)
         self.b_back.configure(state="normal" if self.step else "disabled")
-        self.b_next.configure(text="Done" if self.step == len(TOUR_STEPS) - 1
-                              else "Next")
+        self.b_next.configure(text="Готово" if self.step == len(TOUR_STEPS) - 1
+                              else "Далее")
 
     def next(self) -> None:
         if self.step >= len(TOUR_STEPS) - 1:

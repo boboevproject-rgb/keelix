@@ -19,6 +19,7 @@ from datetime import datetime
 import numpy as np
 
 from .monitor import BaseReport, Event, berth_matrix, normal_range
+from .timeutil import RU_MONTHS_NOM, ru_date
 
 # ---------------------------------------------------------------- palette
 INK = "#1b1f24"
@@ -36,19 +37,19 @@ SERIES = ("#1f5fbf", "#b26a00", "#1a7f37", "#6f42c1", "#b42318", "#0e7490")
 
 KINDS: dict[str, tuple[str, str, str]] = {
     # kind: (marker, colour, label)
-    "left": ("v", RED, "departure"),
-    "left?": ("v", RED_SOFT, "unconfirmed departure"),
-    "part-left": ("v", PURPLE, "one of a group left"),
-    "group-left": ("v", RED, "group departure"),
-    "arrived": ("^", GREEN, "arrival"),
-    "part-arrived": ("^", PURPLE, "one joined a group"),
-    "group-arrived": ("^", GREEN, "group arrival"),
-    "visit": ("o", MUTED, "seen once"),
-    "long-stay": ("s", AMBER, "unusually long stay"),
-    "shift-down": ("_", RED, "level fell"),
-    "shift-up": ("_", GREEN, "level rose"),
-    "emptier": ("_", RED, "unusually empty period"),
-    "fuller": ("_", GREEN, "unusually full period"),
+    "left": ("v", RED, "уход"),
+    "left?": ("v", RED_SOFT, "неподтверждённый уход"),
+    "part-left": ("v", PURPLE, "один из группы ушёл"),
+    "group-left": ("v", RED, "уход группы"),
+    "arrived": ("^", GREEN, "приход"),
+    "part-arrived": ("^", PURPLE, "один присоединился к группе"),
+    "group-arrived": ("^", GREEN, "приход группы"),
+    "visit": ("o", MUTED, "замечен один раз"),
+    "long-stay": ("s", AMBER, "необычно долгая стоянка"),
+    "shift-down": ("_", RED, "уровень упал"),
+    "shift-up": ("_", GREEN, "уровень вырос"),
+    "emptier": ("_", RED, "необычно пустой период"),
+    "fuller": ("_", GREEN, "необычно полный период"),
 }
 
 HEADLINE_KINDS = ("group-left", "group-arrived", "shift-down", "shift-up",
@@ -79,11 +80,14 @@ def style(fig) -> None:
 
 
 def _short_title(e: Event) -> str:
+    # Titles come from monitor.py; accept both the English and the Russian
+    # wording so the label stays short whichever one it produces.
     t = e.title
-    if t.startswith("Carrier group"):
+    if t.startswith("Carrier group") or t.lower().startswith("авианос"):
         return t.split(":")[0].replace("Carrier group", "Carrier grp")
-    if t.startswith("About"):
-        return t.replace("About ", "~")
+    for w in ("About ", "Около ", "Примерно "):
+        if t.startswith(w):
+            return ("~" + t[len(w):])[:34]
     return t[:34]
 
 
@@ -95,11 +99,43 @@ def rolling_median(y: np.ndarray, k: int = 3) -> np.ndarray:
     return out
 
 
+#: Placeholder around a month number; replaced by a Russian abbreviation.
+_M = "\x01%m\x01"
+
+
+def _ru_months(text: str) -> str:
+    import re
+    return re.sub("\x01(\\d\\d)\x01",
+                  lambda m: RU_MONTHS_NOM[int(m.group(1)) - 1], text)
+
+
+def _ru_formatter(loc):
+    """ConciseDateFormatter with Russian month names, locale-independent."""
+    import matplotlib.dates as mdates
+
+    class _RuConcise(mdates.ConciseDateFormatter):
+        def __call__(self, x, pos=None):
+            return _ru_months(super().__call__(x, pos))
+
+        def format_ticks(self, values):
+            return [_ru_months(v) for v in super().format_ticks(values)]
+
+        def get_offset(self):
+            return _ru_months(super().get_offset())
+
+    return _RuConcise(
+        loc,
+        formats=["%Y", _M, "%d", "%H:%M", "%H:%M", "%S.%f"],
+        zero_formats=["", "%Y", _M, "%d " + _M, "%H:%M", "%H:%M"],
+        offset_formats=["", "%Y", _M + " %Y", "%d " + _M + " %Y",
+                        "%d " + _M + " %Y", "%d " + _M + " %Y %H:%M"])
+
+
 def _date_axis(ax) -> None:
     import matplotlib.dates as mdates
     loc = mdates.AutoDateLocator(minticks=4, maxticks=9)
     ax.xaxis.set_major_locator(loc)
-    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
+    ax.xaxis.set_major_formatter(_ru_formatter(loc))
 
 
 # ================================================================ activity
@@ -113,7 +149,7 @@ def draw_activity(fig, rep: BaseReport, events: list[Event] | None = None,
     ax2 = fig.add_subplot(gs[1], sharex=ax)
     P = rep.passes
     if not P:
-        ax.text(0.5, 0.5, "no passes", ha="center", va="center")
+        ax.text(0.5, 0.5, "нет пролётов", ha="center", va="center")
         style(fig)
         return {}
     t = [p.when for p in P]
@@ -127,22 +163,22 @@ def draw_activity(fig, rep: BaseReport, events: list[Event] | None = None,
         if k % 2 == 1:
             ax.axvspan(a, b, color="#fafafa", zorder=0)
         ax.hlines(r["level"], a, b, color=INK, lw=1.2, alpha=0.35, zorder=2)
-    ax.axhspan(lo, hi, color=BAND, zorder=0, label="normal range")
+    ax.axhspan(lo, hi, color=BAND, zorder=0, label="обычный диапазон")
     ax.axhline(usual, color=ACCENT, lw=0.9, ls="--", alpha=0.7,
-               label=f"usual ({usual:.0f})")
+               label=f"обычно ({usual:.0f})")
     ax.plot(t, rolling_median(y), "-", color=INK, lw=1.8,
-            label="trend (3-pass median)", zorder=3)
+            label="тренд (медиана 3 пролётов)", zorder=3)
     good = [i for i, p in enumerate(P) if p.good]
     bad = [i for i, p in enumerate(P) if not p.good]
     ax.plot([t[i] for i in good], y[good], "o", color=ACCENT, ms=4.5,
-            zorder=4, label="radar pass")
+            zorder=4, label="пролёт радара")
     if bad:
         ax.plot([t[i] for i in bad], y[bad], "o", mfc="white", mec=ACCENT,
-                ms=4.5, zorder=4, label="rough or partial pass")
+                ms=4.5, zorder=4, label="волнение или неполный пролёт")
     if P[0].static_n:
         ax.axhspan(0, P[0].static_n, color="#f1f1f1", zorder=0)
-        ax.text(t[0], P[0].static_n / 2, f"  {P[0].static_n} present "
-                f"throughout", va="center", fontsize=8, color=MUTED)
+        ax.text(t[0], P[0].static_n / 2, f"  {P[0].static_n} стоят "
+                f"весь период", va="center", fontsize=8, color=MUTED)
 
     pick: dict = {}
     idx = {p.when: i for i, p in enumerate(P)}
@@ -164,8 +200,8 @@ def draw_activity(fig, rep: BaseReport, events: list[Event] | None = None,
                 # group movements: a glyph in the strip above the data,
                 # clickable, no text (the text collided whenever a base
                 # was busy; the list on the right carries it)
-                lab = ("group sailed (top strip)" if m == "v"
-                       else "group returned (top strip)")
+                lab = ("группа ушла (верхняя полоса)" if m == "v"
+                       else "группа вернулась (верхняя полоса)")
                 art, = ax.plot([x0], [top + 0.9], m, color=c, ms=11,
                                mec=INK, mew=0.4, picker=6, zorder=6,
                                label=lab if lab not in labelled else None)
@@ -203,7 +239,7 @@ def draw_activity(fig, rep: BaseReport, events: list[Event] | None = None,
             a, b = P[r["start"]].when, P[r["end"]].when
             ax.axvspan(a, b, color=RED_SOFT if r["level"] <= lo
                        else GREEN_SOFT, alpha=0.25, zorder=0)
-    ax.set_ylabel("large ships in port (estimated)")
+    ax.set_ylabel("крупных судов в порту (оценка)")
     ax.set_ylim(0, top + 4.2)
     handles, labels = ax.get_legend_handles_labels()
     ncol = max(1, min(4, int(fig.get_figwidth() / 2.4)))
@@ -216,7 +252,7 @@ def draw_activity(fig, rep: BaseReport, events: list[Event] | None = None,
     metres = np.array([p.occupied_m for p in P]) / 1000.0
     ax2.fill_between(t, metres, color=ACCENT, alpha=0.18, step="mid")
     ax2.plot(t, metres, color=ACCENT, lw=1.1, drawstyle="steps-mid")
-    ax2.set_ylabel("hull\nalongside (km)", fontsize=8)
+    ax2.set_ylabel("корпуса\nу причалов (км)", fontsize=8)
     ax2.set_ylim(0, max(metres.max() * 1.25, 0.5))
     _date_axis(ax2)
     style(fig)
@@ -234,7 +270,7 @@ def draw_berths(fig, rep: BaseReport, selected: tuple[int, int] | None = None
     P = rep.passes
     ax = fig.add_subplot(111)
     if not ids or not P:
-        ax.text(0.5, 0.5, "no berths found", ha="center", va="center")
+        ax.text(0.5, 0.5, "причалы не найдены", ha="center", va="center")
         style(fig)
         return {}
     from matplotlib.colors import LinearSegmentedColormap
@@ -244,10 +280,10 @@ def draw_berths(fig, rep: BaseReport, selected: tuple[int, int] | None = None
     im = ax.imshow(M, aspect="auto", cmap=cmap, vmin=0, vmax=1,
                    interpolation="nearest")
     ax.set_yticks(range(len(ids)))
-    ax.set_yticklabels([f"berth {b}" for b in ids], fontsize=7.5)
+    ax.set_yticklabels([f"причал {b}" for b in ids], fontsize=7.5)
     step = max(1, len(P) // 14)
     ax.set_xticks(range(0, len(P), step))
-    ax.set_xticklabels([f"{P[i].when:%d %b}" for i in range(0, len(P), step)],
+    ax.set_xticklabels([ru_date(P[i].when, "%d %b") for i in range(0, len(P), step)],
                        rotation=0, fontsize=7.5)
     for j, p in enumerate(P):
         if not p.good:
@@ -265,11 +301,11 @@ def draw_berths(fig, rep: BaseReport, selected: tuple[int, int] | None = None
             ax.add_patch(__import__("matplotlib").patches.Rectangle(
                 (pj - 0.5, r - 0.5), 1, 1, fill=False, ec=RED, lw=2))
     cb = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.01)
-    cb.set_label("share of berth occupied", fontsize=8, color=INK)
+    cb.set_label("доля занятого причала", fontsize=8, color=INK)
     cb.ax.tick_params(labelsize=7.5, colors=MUTED)
-    ax.set_title("Which berths held a hull on each pass (grey = not imaged, "
-                 "amber column = rough water or partial pass)", fontsize=9,
-                 loc="left")
+    ax.set_title("Какие причалы были заняты корпусом на каждом пролёте "
+                 "(серое = нет снимка, янтарный столбец = волнение или "
+                 "неполный пролёт)", fontsize=9, loc="left", wrap=True)
     style(fig)
     ax.grid(False)
     fig.subplots_adjust(left=0.1, right=0.97, top=0.93, bottom=0.07)
@@ -374,7 +410,7 @@ def draw_compare(fig, reps: list[BaseReport]) -> None:
     if not reps:
         ax = fig.add_subplot(111)
         ax.axis("off")
-        ax.text(0.5, 0.5, "Tick bases in the list to compare them.",
+        ax.text(0.5, 0.5, "Отметьте базы в списке, чтобы сравнить их.",
                 ha="center", va="center", fontsize=11, color=MUTED)
         return
     n = len(reps)
@@ -386,8 +422,8 @@ def draw_compare(fig, reps: list[BaseReport]) -> None:
         rel = rolling_median(y) / max(r.usual_in_port, 1.0) * 100.0
         ax.plot(t, rel, "-", lw=1.8, label=r.name, color=SERIES[k % len(SERIES)])
     ax.axhline(100, color=MUTED, ls="--", lw=0.9)
-    ax.set_ylabel("% of own usual level\n(3-pass trend)")
-    ax.set_title("How full each base is, against its own usual level",
+    ax.set_ylabel("% от своего обычного\nуровня (тренд по 3)")
+    ax.set_title("Заполненность каждой базы относительно её обычного уровня",
                  fontsize=9.5, loc="left")
     ax.legend(fontsize=8, ncol=min(n, 4), frameon=False, loc="upper left")
     ax.tick_params(labelbottom=False)
@@ -458,8 +494,8 @@ def draw_pursuit(fig, P, basemap=None) -> None:
         col = MUTED
         ax.plot(f.target.lon, f.target.lat, "o", color=col, mec=INK, ms=10,
                 zorder=7)
-        ax.annotate(f"{f.when:%d %b} · {f.length_m:.0f}×{f.width_m:.0f} m"
-                    f" · identity unverified",
+        ax.annotate(f"{ru_date(f.when, '%d %b')} · {f.length_m:.0f}×{f.width_m:.0f} м"
+                    f" · опознание не подтверждено",
                     (f.target.lon, f.target.lat), xytext=(8, -12),
                     textcoords="offset points", fontsize=8, color=INK,
                     bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=col,
@@ -467,13 +503,14 @@ def draw_pursuit(fig, P, basemap=None) -> None:
     ax.set_xlim(w, e)
     ax.set_ylim(s, n)
     ax.set_aspect(1.0 / max(math.cos(math.radians(0.5 * (s + n))), 0.2))
-    ax.set_xlabel("longitude")
-    ax.set_ylabel("latitude")
-    ax.set_title(f"Experimental size candidates near {P.base_name} · "
-                 f"departure window {P.t0:%d %b}–{P.t1:%d %b}\n"
-                 "Dashed links: tentative timing associations; identity unverified.\n"
-                 "White: usable-pixel bounding envelopes (may contain gaps). "
-                 "Open circles: unlinked candidates.", fontsize=9,
+    ax.set_xlabel("долгота")
+    ax.set_ylabel("широта")
+    ax.set_title(f"Экспериментальные кандидаты по размеру у {P.base_name} · "
+                 f"окно ухода {ru_date(P.t0, '%d %b')}–{ru_date(P.t1, '%d %b')}\n"
+                 "Пунктир: предварительные связи по времени; опознание не "
+                 "подтверждено.\n"
+                 "Белое: границы пригодных пикселей (внутри возможны пропуски). "
+                 "Пустые кружки: несвязанные кандидаты.", fontsize=9,
                  loc="left")
     style(fig)
     ax.grid(True, color="white", lw=0.4, alpha=0.5)

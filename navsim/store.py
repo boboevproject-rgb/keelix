@@ -21,7 +21,7 @@ import numpy as np
 from . import radar
 from .bases import Base
 from .monitor import BaseReport, MonitorConfig, analyse, land_mask
-from .timeutil import parse_time
+from .timeutil import parse_time, ru_date
 
 DATA_DIR = Path.home() / "navsim_data" / "monitor"
 #: Parallel downloads.  Copernicus rate-limits free accounts; four in flight
@@ -60,7 +60,7 @@ def save_meta(base: Base, meta: dict) -> None:
         tmp.replace(_meta_path(base))
     except OSError as exc:
         import warnings
-        warnings.warn(f"could not save state for {base.key}: {exc}")
+        warnings.warn(f"не удалось сохранить состояние {base.key}: {exc}")
 
 
 def known_passes(base: Base) -> list[radar.Pass]:
@@ -94,11 +94,12 @@ def update(base: Base, months: float, progress: Progress | None = None,
     say = progress or (lambda f, m: None)
     if free_space_mb() < 300:
         raise RuntimeError(
-            f"Only {free_space_mb():.0f} MB free on this disk. Each radar "
-            f"pass takes about 1-2 MB; free some space before updating.")
+            f"На диске свободно всего {free_space_mb():.0f} МБ. Каждый "
+            f"пролёт радара занимает около 1–2 МБ; освободите место перед "
+            f"обновлением.")
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=30.44 * months)
-    say(0.0, f"{base.name}: asking Copernicus which radar passes exist...")
+    say(0.0, f"{base.name}: запрашиваю у Copernicus список пролётов радара...")
     found = radar.search_passes(base.bbox, start, end)
     _check(cancel)
     meta = load_meta(base)
@@ -106,8 +107,8 @@ def update(base: Base, months: float, progress: Progress | None = None,
     todo = [p for p in found if not radar.is_cached(base.bbox, p.when)
             and p.when.isoformat() not in failed]
     n_cached = len(found) - len(todo)
-    say(0.05, f"{base.name}: {len(found)} passes, {n_cached} already on "
-              f"disk, downloading {len(todo)}")
+    say(0.05, f"{base.name}: пролётов {len(found)}, уже на диске "
+              f"{n_cached}, скачиваю {len(todo)}")
     done = 0
     new_failed: list[str] = []
     if todo:
@@ -120,12 +121,12 @@ def update(base: Base, months: float, progress: Progress | None = None,
                     try:
                         fut.result()
                     except radar.RadarError as exc:
-                        if "no radar data" in str(exc):
+                        if isinstance(exc, radar.NoRadarData):
                             new_failed.append(p.when.isoformat())
                     done += 1
                     say(0.05 + 0.9 * done / len(todo),
-                        f"{base.name}: downloaded {done}/{len(todo)} "
-                        f"({p.when:%d %b %Y})")
+                        f"{base.name}: скачано {done}/{len(todo)} "
+                        f"({ru_date(p.when, '%d %b %Y')})")
                     if cancel is not None and cancel.is_set():
                         for f in futs:
                             f.cancel()
@@ -284,25 +285,25 @@ def analyse_base(base: Base, months: float = 9.0,
     (call :func:`update` first); the land mask and exit route are fetched
     once and cached."""
     say = progress or (lambda f, m: None)
-    say(0.0, f"{base.name}: reading radar passes from disk...")
+    say(0.0, f"{base.name}: читаю пролёты радара с диска...")
     passes, patches = cached_stack(base, months)
     _check(cancel)
     if len(passes) < 4:
         raise ValueError(
-            f"{base.name}: only {len(passes)} radar passes on disk. Press "
-            f"Update to download them (free).")
-    say(0.4, f"{base.name}: land cover, land mask and depth check...")
+            f"{base.name}: на диске всего {len(passes)} пролётов радара. "
+            f"Нажмите «Обновить» (Update), чтобы скачать их (бесплатно).")
+    say(0.4, f"{base.name}: покров суши, маска суши и проверка глубин...")
     land, cell = get_land(base, patches[0].shape, patches[0].transform,
                           patches[0].crs)
     water = get_water(base, patches[0].shape, patches[0].transform,
                       patches[0].crs)
     route = get_exit_route(base)
     _check(cancel)
-    say(0.6, f"{base.name}: finding hulls in {len(passes)} passes...")
+    say(0.6, f"{base.name}: ищу корпуса в {len(passes)} пролётах...")
     rep = analyse(base.key, base.name, passes, patches, cfg,
                   exit_route=route, land=land, land_cell_m=cell, water=water)
     if land is None:
-        rep.notes.append("Land mask unavailable (elevation service did not "
-                         "answer): some hits on land may remain.")
-    say(1.0, f"{base.name}: done")
+        rep.notes.append("Маска суши недоступна (сервис высот не ответил): "
+                         "часть отметок на суше может остаться.")
+    say(1.0, f"{base.name}: готово")
     return rep

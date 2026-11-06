@@ -49,6 +49,10 @@ class RadarError(RuntimeError):
     pass
 
 
+class NoRadarData(RadarError):
+    """The service answered, but there is no acquisition at that time."""
+
+
 # --------------------------------------------------------------------------
 # Auth
 # --------------------------------------------------------------------------
@@ -70,16 +74,16 @@ def get_token(force: bool = False) -> str:
     sec = credentials.get("copernicus", "client_secret")
     if not cid or not sec:
         raise RadarError(
-            "No Copernicus key yet. It is free: register at "
-            "dataspace.copernicus.eu, create an OAuth client under Sentinel "
-            "Hub user settings, and paste the id and secret into Settings.")
+            "Ключа Copernicus пока нет. Он бесплатный: зарегистрируйтесь на "
+            "dataspace.copernicus.eu, создайте OAuth-клиента в настройках "
+            "пользователя Sentinel Hub и вставьте id и secret в Настройки.")
     r = requests.post(TOKEN_URL, data={
         "grant_type": "client_credentials",
         "client_id": cid, "client_secret": sec}, timeout=60)
     if not r.ok:
         raise RadarError(
-            f"Copernicus rejected the key ({r.status_code}). Check the client "
-            f"id and secret in Settings.")
+            f"Copernicus отклонил ключ ({r.status_code}). Проверьте client "
+            f"id и secret в Настройках.")
     tok = r.json()
     _TOKEN["value"] = tok["access_token"]
     _TOKEN["expires"] = time.time() + float(tok.get("expires_in", 600))
@@ -101,7 +105,7 @@ def _post(sess, url: str, body: dict, timeout: float, tries: int = 4):
             r = sess.post(url, json=body, timeout=timeout)
         except Exception as exc:              # network blip
             if k == tries - 1:
-                raise RadarError(f"network error talking to Copernicus: "
+                raise RadarError(f"сетевая ошибка при обращении к Copernicus: "
                                  f"{exc}") from exc
             time.sleep(delay)
             delay *= 2
@@ -176,7 +180,7 @@ def search_passes(bbox: Sequence[float], start: datetime, end: datetime,
     while True:
         r = _post(sess, CATALOG_URL, body, timeout=120)
         if not r.ok:
-            raise RadarError(f"radar catalogue search failed "
+            raise RadarError(f"поиск в каталоге радара не удался "
                              f"({r.status_code}): {r.text[:200]}")
         data = r.json()
         for f in data.get("features", []):
@@ -280,8 +284,8 @@ def fetch_patch(bbox: Sequence[float], when: datetime,
     width = max(int(round((ubox[2] - ubox[0]) / gsd_m)), 16)
     height = max(int(round((ubox[3] - ubox[1]) / gsd_m)), 16)
     if max(width, height) > MAX_REQUEST_PX:
-        raise RadarError(f"box is {width}x{height} px, over the "
-                         f"{MAX_REQUEST_PX} px limit")
+        raise RadarError(f"область {width}x{height} пикс., больше предела "
+                         f"{MAX_REQUEST_PX} пикс.")
     epsg = int(crs.split(":")[1])
     t0 = when - timedelta(hours=window_hours)
     t1 = when + timedelta(hours=window_hours)
@@ -307,7 +311,7 @@ def fetch_patch(bbox: Sequence[float], when: datetime,
     }
     r = _post(_session(), PROCESS_URL, body, timeout=timeout)
     if not r.ok:
-        raise RadarError(f"radar download failed ({r.status_code}): "
+        raise RadarError(f"не удалось скачать снимок радара ({r.status_code}): "
                          f"{r.text[:200]}")
     import rasterio
     with rasterio.open(io.BytesIO(r.content)) as src:
@@ -317,7 +321,7 @@ def fetch_patch(bbox: Sequence[float], when: datetime,
     finite = np.isfinite(arr)
     if not finite.any() or float(np.nanmax(np.abs(arr[finite]))) <= 0.0:
         # Sentinel Hub answers "no acquisition" with an all-zero raster.
-        raise RadarError(f"no radar data for {when:%Y-%m-%d %H:%M}Z")
+        raise NoRadarData(f"нет данных радара на {when:%Y-%m-%d %H:%M}Z")
     if use_cache:
         try:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -366,7 +370,7 @@ def search_products(bbox: Sequence[float], start: datetime, end: datetime,
     while True:
         r = _post(sess, CATALOG_URL, body, timeout=120)
         if not r.ok:
-            raise RadarError(f"radar catalogue search failed "
+            raise RadarError(f"поиск в каталоге радара не удался "
                              f"({r.status_code}): {r.text[:200]}")
         data = r.json()
         for f in data.get("features", []):

@@ -20,7 +20,12 @@ from typing import Callable, Sequence
 import numpy as np
 
 from . import radar
-from .monitor import CARRIER_MIN_LENGTH_M, CARRIER_MIN_WIDTH_M, Event, interpret
+from .monitor import (CARRIER_MIN_LENGTH_M, CARRIER_MIN_WIDTH_M, Event,
+                      count, fmt_date, fmt_lat_lon, interpret)
+
+#: Noun forms for counts in the texts below.
+_CANDIDATES = ("кандидат", "кандидата", "кандидатов")
+_TILES = ("тайл", "тайла", "тайлов")
 
 KM_PER_DEG = 111.32
 MIN_SPEED_KN = 8.0
@@ -337,18 +342,18 @@ def search(base_key: str, base_name: str, base_lonlat: tuple[float, float],
     P = Pursuit(base_key, base_name, base_lonlat, t0, t1, length_m, width_m,
                 region)
     end = t1 + timedelta(days=days_after)
-    say(0.0, "listing radar products over the region…")
+    say(0.0, "список радарных продуктов над районом…")
     products = radar.search_products(region, t0, end)
     passes: dict[tuple, list[radar.Product]] = {}
     for pr in products:
         passes.setdefault((pr.geometry, pr.when.strftime("%Y%m%d%H")), []
                           ).append(pr)
-    say(0.02, f"{len(products)} products in {len(passes)} passes; building "
-              f"land mask…")
+    say(0.02, f"продуктов: {len(products)}, пролётов: {len(passes)}; "
+              f"строится маска суши…")
     land_fn = _land_function(region)
     if land_fn is None:
-        P.notes.append("Land exclusion was unavailable; land and coastal "
-                       "structures may appear among the candidates.")
+        P.notes.append("Исключение суши недоступно: среди кандидатов могут "
+                       "оказаться суша и береговые сооружения.")
     plan = []
     for key, prs in sorted(passes.items(), key=lambda kv: kv[1][0].when):
         union = (min(p.bbox[0] for p in prs), min(p.bbox[1] for p in prs),
@@ -384,14 +389,14 @@ def search(base_key: str, base_name: str, base_lonlat: tuple[float, float],
                 0.5 * (tb[1] + tb[3])))[:per]
             trimmed.append((pr, clip, tiles))
         plan = trimmed
-        P.notes.append(f"The catalogue produced {total} planned tiles; "
-                       f"at most {max_tiles} will be attempted, nearest "
-                       f"the base first within each pass. Some passes or "
-                       f"parts of passes may be unsearched.")
+        P.notes.append(f"По каталогу запланировано тайлов: {total}; будет "
+                       f"запрошено не более {max_tiles}, в каждом пролёте — "
+                       f"сначала ближайшие к базе. Некоторые пролёты или их "
+                       f"части могут остаться непросмотренными.")
         total = sum(len(t) for _p, _c, t in plan)
-    say(0.03, f"{min(total, max_tiles)} radar tiles to fetch at "
-              f"{COARSE_GSD_M:.0f} m; Copernicus throttles free accounts, so "
-              f"expect 15-40 s per tile")
+    say(0.03, f"радарных тайлов к загрузке: {min(total, max_tiles)} с шагом "
+              f"{COARSE_GSD_M:.0f} м; Copernicus ограничивает бесплатные "
+              f"аккаунты, так что рассчитывайте на 15–40 с на тайл")
     done = 0
     small: list[Target] = []
     for pr, clip, tiles in plan:
@@ -411,8 +416,9 @@ def search(base_key: str, base_name: str, base_lonlat: tuple[float, float],
             done += 1
             attempted += 1
             say(0.03 + 0.9 * done / max(min(total, max_tiles), 1),
-                f"{pr.when:%d %b %H:%M} {pr.geometry}: tile {done}/"
-                f"{min(total, max_tiles)}, {len(P.candidates)} candidates")
+                f"{fmt_date(pr.when, time=True)} {pr.geometry}: тайл {done}/"
+                f"{min(total, max_tiles)}, "
+                f"{count(len(P.candidates), *_CANDIDATES)}")
             try:
                 patch = radar.fetch_patch(tb, pr.when, gsd_m=COARSE_GSD_M,
                                           window_hours=0.5)
@@ -443,8 +449,8 @@ def search(base_key: str, base_name: str, base_lonlat: tuple[float, float],
     ranked = sorted(P.candidates, key=lambda t: -(min(t.width_m, 120.0)
                                                    + 0.2 * min(t.length_m, 450)
                                                    + t.peak_db))
-    say(0.94, f"confirming {min(len(ranked), max_confirm)} of "
-              f"{len(ranked)} candidates at 10 m…")
+    say(0.94, f"перемер с шагом 10 м: {min(len(ranked), max_confirm)} из "
+              f"{count(len(ranked), *_CANDIDATES)}…")
     for k, t in enumerate(ranked):
         if cancel is not None and cancel.is_set():
             from .store import Cancelled
@@ -456,14 +462,16 @@ def search(base_key: str, base_name: str, base_lonlat: tuple[float, float],
                 if not (math.isfinite(L) and math.isfinite(Wd)
                         and math.isfinite(pk) and L > 0 and Wd > 0):
                     L, Wd, pk = 0.0, 0.0, 0.0
-                    note = "No usable fine-grid measurement."
+                    note = "Нет пригодного замера на точной сетке."
             except Exception:
                 L, Wd, pk = 0.0, 0.0, 0.0
-                note = "Fine-grid measurement failed; coarse candidate only."
+                note = ("Замер на точной сетке не удался; есть только грубый "
+                        "кандидат.")
         else:
             L, Wd, pk = 0.0, 0.0, 0.0
-            note = ("Fine-grid measurement disabled." if not confirm else
-                    "Fine-grid measurement not attempted: candidate budget.")
+            note = ("Замер на точной сетке отключён." if not confirm else
+                    "Замер на точной сетке не выполнялся: исчерпан бюджет "
+                    "кандидатов.")
         esc = [s for s in small
                if abs((s.when - t.when).total_seconds()) < 3600
                and 80 <= s.length_m <= 220
@@ -472,7 +480,7 @@ def search(base_key: str, base_name: str, base_lonlat: tuple[float, float],
                            verification_note=note))
     P.fixes.sort(key=lambda f: f.when)
     _reject_fixed(P)
-    say(0.97, "checking carrier-shaped targets against another date…")
+    say(0.97, "сверка целей размером с авианосец с другой датой…")
     for f in P.fixes:
         if f.is_carrier:
             try:
@@ -483,18 +491,19 @@ def search(base_key: str, base_name: str, base_lonlat: tuple[float, float],
             if repeated is not None:
                 f.fixed = repeated
             else:
-                f.verification_note = "Repeat-date check unavailable."
+                f.verification_note = "Проверка по другой дате недоступна."
     unmeasured = sum(not f.confirmed for f in P.fixes)
     if unmeasured:
-        P.notes.append(f"{unmeasured} coarse candidate(s) have no successful "
-                       "fine-grid measurement; they are not confirmed size "
-                       "candidates.")
+        P.notes.append(f"Грубых кандидатов без успешного замера на точной "
+                       f"сетке: {unmeasured}; они не являются подтверждёнными "
+                       f"кандидатами по размеру.")
     unchecked = sum(f.is_carrier and not f.repeat_checked for f in P.fixes)
     if unchecked:
-        P.notes.append(f"{unchecked} size candidate(s) lack a usable "
-                       "repeat-date check; stationary returns remain possible.")
+        P.notes.append(f"Кандидатов по размеру без пригодной проверки по "
+                       f"другой дате: {unchecked}; это могут быть и "
+                       f"неподвижные отражения.")
     _chain(P)
-    say(1.0, "done")
+    say(1.0, "готово")
     return P
 
 
@@ -580,33 +589,35 @@ def _chain(P: Pursuit) -> None:
                 b = bearing_deg(P.base_lonlat[0], P.base_lonlat[1], t.lon,
                                 t.lat)
                 f.heading_deg = _resolve_heading(t.angle_deg, b)
-                f.why = (f"{km:.0f} km from the base, which needs at least "
-                         f"{v_min:.0f} kn given the departure window; "
-                         f"{len(f.escorts)} nearby size-filtered target(s) within "
-                         f"{ESCORT_RANGE_KM:.0f} km; hull {f.length_m:.0f} x "
-                         f"{f.width_m:.0f} m on the 10 m grid. "
-                         f"Timing compatibility does not establish identity")
+                f.why = (f"{km:.0f} км от базы, что при окне ухода требует "
+                         f"не менее {v_min:.0f} уз; отобранных по размеру "
+                         f"соседних целей в пределах {ESCORT_RANGE_KM:.0f} км: "
+                         f"{len(f.escorts)}; корпус {f.length_m:.0f} × "
+                         f"{f.width_m:.0f} м на сетке 10 м. Совместимость по "
+                         f"времени не устанавливает, что это тот же корабль")
                 prev = f
             else:
-                f.why = ("outside the departure timing/speed assumptions; "
-                         "identity remains unknown")
+                f.why = ("не укладывается в допущения о времени/скорости "
+                         "ухода; что это за корабль, неизвестно")
         else:
             v = speed_between(prev.target.lon, prev.target.lat, prev.when,
                               t.lon, t.lat, t.when)
             if t.when > prev.when and MIN_SPEED_KN * 0.5 <= v <= MAX_SPEED_KN:
-                f.link_from = f"{prev.when:%d %b %H:%M}"
+                f.link_from = fmt_date(prev.when, time=True)
                 f.speed_kn = v
                 f.heading_deg = bearing_deg(prev.target.lon, prev.target.lat,
                                             t.lon, t.lat)
-                f.why = (f"{v:.0f} kn implied straight-line average from the "
-                         f"previous candidate if these were the same vessel; "
-                         f"{len(f.escorts)} nearby size-filtered target(s). "
-                         f"Neither identity nor speed was measured")
+                f.why = (f"если это тот же корабль, что и предыдущий "
+                         f"кандидат, средняя скорость по прямой — {v:.0f} уз; "
+                         f"отобранных по размеру соседних целей: "
+                         f"{len(f.escorts)}. Ни принадлежность, ни скорость "
+                         f"не измерялись")
                 prev = f
             else:
-                f.why = (f"outside the previous candidate's timing/speed "
-                         f"assumptions ({v:.0f} kn implied); this does not "
-                         f"establish or exclude vessel identity")
+                f.why = (f"не укладывается в допущения о времени/скорости "
+                         f"от предыдущего кандидата (получается {v:.0f} уз); "
+                         f"это не подтверждает и не исключает, что это тот "
+                         f"же корабль")
 
 
 def _resolve_heading(axis_deg: float, away_bearing: float) -> float:
@@ -630,68 +641,77 @@ def reach_km(hours: float, speed_kn: float) -> float:
 
 
 def chain_text(P: Pursuit) -> str:
-    lines = [f"{P.base_name}: search after a reported carrier-sized departure "
-             f"({P.length_m:.0f} x {P.width_m:.0f} m) between "
-             f"{P.t0:%d %b} and {P.t1:%d %b}.",
-             "Experimental size/timing hypotheses only. Vessel identity is "
-             "unverified; nearby targets are not confirmed escorts."]
+    lines = [f"{P.base_name}: поиск в море после ухода корпуса размером с "
+             f"авианосец ({P.length_m:.0f} × {P.width_m:.0f} м) между "
+             f"{fmt_date(P.t0)} и {fmt_date(P.t1)}.",
+             "Только экспериментальные гипотезы по размеру и времени. "
+             "Принадлежность корабля не проверена; соседние цели не "
+             "подтверждены как сопровождение."]
     n_pass = len(P.searched)
     n_tiles = sum(s.tiles for s in P.searched)
     n_blank = sum(s.blank for s in P.searched)
-    lines.append(f"Attempted {n_tiles} tiles across {n_pass} radar passes "
-                 f"at {COARSE_GSD_M:.0f} m output spacing; "
-                 f"{n_tiles - n_blank} usable, {n_blank} failed or blank. "
-                 "Coverage envelopes can contain gaps; unsearched areas "
-                 "provide no evidence of absence.")
+    lines.append(f"Запрошено {count(n_tiles, *_TILES)} по "
+                 f"{count(n_pass, 'радарному пролёту', 'радарным пролётам', 'радарным пролётам')}"
+                 f" с шагом "
+                 f"{COARSE_GSD_M:.0f} м; пригодных — {n_tiles - n_blank}, "
+                 f"неудачных или пустых — {n_blank}. Контуры покрытия могут "
+                 "содержать пропуски; непросмотренные области не доказывают "
+                 "отсутствия.")
     chain = P.chain
     shaped = [f for f in P.fixes if f.is_carrier]
     if not chain:
         if shaped:
-            lines.append("Size candidates were found, but none was linked "
-                         "under the timing assumptions. Identity is unknown.")
+            lines.append("Кандидаты по размеру найдены, но ни один не связан "
+                         "при допущениях о времени. Принадлежность неизвестна.")
         elif n_tiles == n_blank:
-            lines.append("No usable radar coverage was analysed; no detection "
-                         "conclusion can be drawn.")
+            lines.append("Пригодного радарного покрытия для анализа нет; "
+                         "никаких выводов об обнаружении сделать нельзя.")
         elif any(not f.confirmed for f in P.fixes):
-            lines.append("No remeasured candidate met the size checks; some "
-                         "coarse candidates remain unverified.")
+            lines.append("Ни один перемеренный кандидат не прошёл проверку "
+                         "размера; часть грубых кандидатов остаётся "
+                         "непроверенной.")
         else:
-            lines.append("No candidate passed the size and stationary-repeat "
-                         "checks in the analysed tiles. This does not show "
-                         "that a particular vessel was absent.")
+            lines.append("В проанализированных тайлах ни один кандидат не "
+                         "прошёл проверки размера и повторяемости на месте. "
+                         "Это не доказывает, что конкретного корабля там "
+                         "не было.")
     for f in chain:
         lines.append(
-            f"- {f.when:%d %b %H:%M} UTC: size candidate {f.length_m:.0f}"
-            f" x {f.width_m:.0f} m at {abs(f.target.lat):.2f}"
-            f"{'N' if f.target.lat >= 0 else 'S'} {abs(f.target.lon):.2f}"
-            f"{'E' if f.target.lon >= 0 else 'W'}. Identity unverified. "
-            f"{f.why}.")
+            f"- {fmt_date(f.when, time=True)} UTC: кандидат по размеру "
+            f"{f.length_m:.0f} × {f.width_m:.0f} м "
+            f"({fmt_lat_lon(f.target.lat, f.target.lon, 2)}). Принадлежность "
+            f"не проверена. {_cap1(f.why)}.")
         if f.verification_note:
             lines.append(f"  {f.verification_note}")
     other = [f for f in P.fixes if f.is_carrier and not f.link_from]
     if other:
-        lines.append(f"{len(other)} other size candidate(s) were seen "
-                     f"but not linked under the timing assumptions (for example "
-                     f"{other[0].when:%d %b}: {other[0].why}).")
+        lines.append(f"Прочих кандидатов по размеру, замеченных, но не "
+                     f"связанных при допущениях о времени: {len(other)} "
+                     f"(например, {fmt_date(other[0].when)}: "
+                     f"{other[0].why}).")
     n_conf = sum(f.confirmed for f in P.fixes)
     n_fixed = sum(f.fixed for f in P.fixes)
-    lines.append(f"{len(P.candidates)} rough candidates at {COARSE_GSD_M:.0f}"
-                 f" m; {n_conf} remeasured on a 10 m grid, {n_fixed} flagged "
-                 f"as stationary or recurrent, {len(shaped)} meet the size "
-                 f"checks. Remeasuring the same acquisition does not "
-                 f"independently confirm a vessel.")
+    lines.append(f"Грубых кандидатов с шагом {COARSE_GSD_M:.0f} м: "
+                 f"{len(P.candidates)}; перемерено на сетке 10 м: {n_conf}, "
+                 f"помечено как неподвижные или повторяющиеся: {n_fixed}, "
+                 f"проходят проверку размера: {len(shaped)}. Перемер того же "
+                 f"снимка не является независимым подтверждением корабля.")
     check_notes: dict[str, int] = {}
     for f in P.fixes:
         if f.verification_note and not f.link_from:
             check_notes[f.verification_note] = (
                 check_notes.get(f.verification_note, 0) + 1)
-    lines.extend(f"Check: {count} candidate(s): {note}"
-                 for note, count in check_notes.items())
+    lines.extend(f"Проверка: {count(k, *_CANDIDATES)}: {note}"
+                 for note, k in check_notes.items())
     for a in P.arrivals:
-        lines.append(f"- Timing-compatible arrival (identity unverified): "
-                     f"{a['text']}")
-    lines.extend(f"Note: {note}" for note in P.notes)
+        lines.append(f"- Приход, совместимый по времени (принадлежность не "
+                     f"проверена): {a['text']}")
+    lines.extend(f"Примечание: {note}" for note in P.notes)
     return "\n".join(lines)
+
+
+def _cap1(s: str) -> str:
+    return s[:1].upper() + s[1:]
 
 
 def link_arrivals(P: Pursuit, reports: dict) -> None:
@@ -721,9 +741,9 @@ def link_arrivals(P: Pursuit, reports: dict) -> None:
             if v_min <= MAX_SPEED_KN:
                 P.arrivals.append({
                     "base": key, "when": e.t1, "event": e,
-                    "text": (f"{b.name}: a {e.length_m:.0f} m carrier-sized "
-                             f"hull arrived between {e.t0:%d %b} and "
-                             f"{e.t1:%d %b}, {km:.0f} km away, which needs "
-                             f"at least {v_min:.0f} kn - "
-                             + ("plausible" if v_min <= 25 else
-                                "only at full speed"))})
+                    "text": (f"{b.name}: корпус {e.length_m:.0f} м размером "
+                             f"с авианосец пришёл между {fmt_date(e.t0)} и "
+                             f"{fmt_date(e.t1)}, в {km:.0f} км отсюда, что "
+                             f"требует не менее {v_min:.0f} уз — "
+                             + ("правдоподобно" if v_min <= 25 else
+                                "только на полном ходу"))})

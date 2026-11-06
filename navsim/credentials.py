@@ -61,11 +61,11 @@ class Provider:
 #: Everything the pipeline can use.  Order is the order shown in the GUI.
 PROVIDERS: tuple[Provider, ...] = (
     Provider(
-        "copernicus", "Copernicus Data Space (Sentinel-1 radar)",
+        "copernicus", "Copernicus Data Space (радар Sentinel-1)",
         ("client_id", "client_secret"),
         ("CDSE_CLIENT_ID", "CDSE_CLIENT_SECRET"),
-        "FREE. Sentinel-1 radar. Register, then create an OAuth client under "
-        "Sentinel Hub > User settings.",
+        "БЕСПЛАТНО. Радар Sentinel-1. Зарегистрируйтесь, затем создайте "
+        "OAuth-клиента в Sentinel Hub > User settings.",
         "https://dataspace.copernicus.eu/",
     ),
 )
@@ -97,10 +97,10 @@ def _save(data: dict) -> Path:
             os.chmod(CREDENTIALS_PATH, stat.S_IRUSR | stat.S_IWUSR)
     except OSError as exc:
         raise OSError(
-            f"Could not save the key to {CREDENTIALS_PATH} ({exc.strerror or exc})."
-            f" You can set the environment variables CDSE_CLIENT_ID and "
-            f"CDSE_CLIENT_SECRET instead, or point NAVSIM_CONFIG_DIR at a "
-            f"folder you can write to.") from exc
+            f"Не удалось сохранить ключ в {CREDENTIALS_PATH} "
+            f"({exc.strerror or exc}). Вместо этого можно задать переменные "
+            f"окружения CDSE_CLIENT_ID и CDSE_CLIENT_SECRET или указать в "
+            f"NAVSIM_CONFIG_DIR папку, доступную для записи.") from exc
     return CREDENTIALS_PATH
 
 
@@ -159,7 +159,7 @@ def masked(provider: str, field: str | None = None) -> str:
     """A safe-to-display form: never more than the last four characters."""
     v = get(provider, field)
     if not v:
-        return "(not set)"
+        return "(не задан)"
     if len(v) <= 8:
         return "****"
     return f"{v[:4]}{'*' * 8}{v[-4:]}"
@@ -168,13 +168,13 @@ def masked(provider: str, field: str | None = None) -> str:
 def source(provider: str, field: str | None = None) -> str:
     p = PROVIDERS_BY_KEY.get(provider)
     if p is None:
-        return "unknown provider"
+        return "неизвестный поставщик"
     field = field or p.fields[0]
     if field in p.fields and os.environ.get(p.env[p.fields.index(field)]):
-        return f"environment ({p.env[p.fields.index(field)]})"
+        return f"переменная окружения ({p.env[p.fields.index(field)]})"
     if (_load().get(provider) or {}).get(field):
         return str(CREDENTIALS_PATH)
-    return "not configured"
+    return "не настроено"
 
 
 def configured(provider: str) -> bool:

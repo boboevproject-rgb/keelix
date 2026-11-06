@@ -19,3 +19,5 @@ ui.json
 .idea/
 .vscode/
 .DS_Store
+
+.venv/

@@ -39,16 +39,16 @@ class TileProvider:
 
 PROVIDERS: dict[str, TileProvider] = {
     "satellite": TileProvider(
-        "satellite", "Satellite (Esri World Imagery)",
+        "satellite", "Спутник (Esri World Imagery)",
         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/"
         "MapServer/tile/{z}/{y}/{x}",
         "Imagery: Esri, Maxar, Earthstar Geographics", 18),
     "streets": TileProvider(
-        "streets", "Streets (OpenStreetMap)",
+        "streets", "Улицы (OpenStreetMap)",
         "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
         "(c) OpenStreetMap contributors", 18),
     "ocean": TileProvider(
-        "ocean", "Ocean chart (Esri Ocean Base)",
+        "ocean", "Морская карта (Esri Ocean Base)",
         "https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/"
         "World_Ocean_Base/MapServer/tile/{z}/{y}/{x}",
         "Esri, GEBCO, NOAA, National Geographic, DeLorme, HERE", 13),
